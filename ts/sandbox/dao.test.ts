@@ -110,6 +110,15 @@ after(async () => {
   await worker?.tearDown();
 });
 
+/** `sputnik-dao.near`'s recorded default code hash (v3.2): `get_default_code_hash` on mainnet. */
+const FACTORY_V3_2_CODE_HASH = "DtHZA1mUmGYeScEaUoUZYQGGFHSMpnjMCvkr5U9hJXuF";
+
+test("the sandbox DAO runs the exact bytes the mainnet factory deploys for v3.2", async () => {
+  const { code_hash } = (await dao.accountView()) as { code_hash: string };
+  assert.equal(code_hash, FACTORY_V3_2_CODE_HASH);
+  console.log(`  DAO code hash ${code_hash} equals the factory's v3.2 hash`);
+});
+
 const getProposal = (id: number): Promise<ProposalView> => dao.view<ProposalView>("get_proposal", { id });
 
 const balanceOf = async (account: NearAccount): Promise<bigint> =>
