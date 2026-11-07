@@ -1,0 +1,157 @@
+{
+  "source": {
+    "what": "Each list_id below was computed by Trezu itself, not by Headcount: generateListId from nt-fe/lib/bulk-payment-api.ts, run unmodified on these synthetic lists.",
+    "repository": "https://github.com/NEAR-DevHub/trezu",
+    "commit": "a6aaaf6742099069634a25fb20c4287a2852dd62",
+    "commit_date": "2026-11-06",
+    "run": "2026-11-07 UTC, Node v26.13.0, Intl locale en-US",
+    "cross_check": "Trezu backend compute_list_hash (nt-be/src/handlers/bulkpayment/submit.rs, same commit), which Trezu uses to verify a submitted list id, gives the same list_id for every vector.",
+    "license_note": "Trezu publishes no license, so none of its code is in this repository: only these outputs, computed from our own inputs."
+  },
+  "formula": "lowercase hex SHA-256 of the UTF-8 JSON {\"payments\":[{\"amount\":\"<integer, smallest unit>\",\"recipient\":\"<account>\"},...],\"submitter\":\"<DAO>\",\"timestamp\":<integer>,\"token_id\":\"<native | token contract>\"}, no whitespace, payments sorted by recipient",
+  "vectors": [
+    {
+      "name": "native NEAR, four recipients given out of order, one implicit account, a 1-yoctoNEAR amount",
+      "submitter": "example-treasury.sputnikv2.testnet",
+      "token_id": "native",
+      "timestamp": 1793448000000,
+      "payments": [
+        {
+          "recipient": "zara.contributor.testnet",
+          "amount": "1500000000000000000000000"
+        },
+        {
+          "recipient": "b4cb422749bf9478832807757e2b7b08f60e2045d73469016f3b66939051cb1c",
+          "amount": "250000000000000000000000"
+        },
+        {
+          "recipient": "alex.contributor.testnet",
+          "amount": "10000000000000000000000000"
+        },
+        {
+          "recipient": "design-guild.contributor.testnet",
+          "amount": "1"
+        }
+      ],
+      "list_id": "8f46fed57b1865789af840e2340afc83feeaf703dbd40b0068140e676bde9a80"
+    },
+    {
+      "name": "a 6-decimal NEP-141 token, recipients that differ at '-', '.' and a digit",
+      "submitter": "growth-council.sputnikv2.testnet",
+      "token_id": "usdc.fakes.testnet",
+      "timestamp": 1793988000000,
+      "payments": [
+        {
+          "recipient": "a1.contributor.testnet",
+          "amount": "12500000"
+        },
+        {
+          "recipient": "b.contributor.testnet",
+          "amount": "7"
+        },
+        {
+          "recipient": "a.contributor.testnet",
+          "amount": "500000"
+        },
+        {
+          "recipient": "a-team.contributor.testnet",
+          "amount": "100000000"
+        }
+      ],
+      "list_id": "7008195cbb64e0496c8b9e66bed425aa436a8a849dea2ac4eff4f73fbd15dd33"
+    },
+    {
+      "name": "the sandbox's 16-recipient round, from fixtures/round-16.csv (6 decimals), as dao.test.near",
+      "submitter": "dao.test.near",
+      "token_id": "token.test.near",
+      "timestamp": 1794009600000,
+      "payments": [
+        {
+          "recipient": "r07.test.near",
+          "amount": "12500000"
+        },
+        {
+          "recipient": "r02.test.near",
+          "amount": "8000000"
+        },
+        {
+          "recipient": "r15.test.near",
+          "amount": "3750000"
+        },
+        {
+          "recipient": "r01.test.near",
+          "amount": "10500000"
+        },
+        {
+          "recipient": "r11.test.near",
+          "amount": "6000000"
+        },
+        {
+          "recipient": "r04.test.near",
+          "amount": "9125000"
+        },
+        {
+          "recipient": "r09.test.near",
+          "amount": "4000000"
+        },
+        {
+          "recipient": "r13.test.near",
+          "amount": "7500000"
+        },
+        {
+          "recipient": "r16.test.near",
+          "amount": "2250000"
+        },
+        {
+          "recipient": "r03.test.near",
+          "amount": "11000000"
+        },
+        {
+          "recipient": "r06.test.near",
+          "amount": "5500000"
+        },
+        {
+          "recipient": "r12.test.near",
+          "amount": "1000001"
+        },
+        {
+          "recipient": "r05.test.near",
+          "amount": "6750000"
+        },
+        {
+          "recipient": "r10.test.near",
+          "amount": "8400000"
+        },
+        {
+          "recipient": "r14.test.near",
+          "amount": "3000000"
+        },
+        {
+          "recipient": "r08.test.near",
+          "amount": "15000000"
+        }
+      ],
+      "list_id": "90a14b05d807a3cfd0823c90d3cc04646d2332ffa01bd0687125295f4282d1c5"
+    }
+  ],
+  "frontend_backend_divergence": [
+    {
+      "name": "underscore versus hyphen: Trezu's frontend and backend sort these two differently",
+      "submitter": "example-treasury.sputnikv2.testnet",
+      "token_id": "native",
+      "timestamp": 1794009600000,
+      "payments": [
+        {
+          "recipient": "a_b.contributor.testnet",
+          "amount": "1000000000000000000000000"
+        },
+        {
+          "recipient": "a-b.contributor.testnet",
+          "amount": "2000000000000000000000000"
+        }
+      ],
+      "trezu_backend_list_id": "680fe0cc828c5eaf46334666866709f77d9ad6e0c11dc4edd41234761b34ec5f",
+      "trezu_frontend_list_id_en_us": "d82a63bbd3994fd295702d4c424502f3ae76cedee3e3fe9dae6191946df3b8e4"
+    }
+  ]
+}

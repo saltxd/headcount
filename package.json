@@ -11,7 +11,7 @@
   "scripts": {
     "build:sputnik": "node scripts/build-sputnik.mjs",
     "pretest": "npm run build:sputnik && node scripts/ensure-sandbox.mjs",
-    "test": "node --test ts/sandbox/*.test.ts",
+    "test": "node --test --test-concurrency=1 ts/test/*.test.ts ts/sandbox/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
