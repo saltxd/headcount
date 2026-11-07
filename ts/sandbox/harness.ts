@@ -189,6 +189,27 @@ export const callKind = (
   },
 });
 
+/**
+ * Sputnik's `ProposalKind::Transfer`: the DAO pays `amount` of `token_id` to `receiver_id`. With a
+ * `msg`, Sputnik makes the payment an `ft_transfer_call` with a fixed 10 TGas
+ * (`GAS_FOR_FT_TRANSFER`, sputnikdao2/src/types.rs:16).
+ */
+export interface TransferKind {
+  readonly Transfer: {
+    readonly token_id: string;
+    readonly receiver_id: string;
+    readonly amount: string;
+    readonly msg: string | null;
+  };
+}
+
+export const transferKind = (tokenId: string, receiverId: string, amount: string, msg: string | null): TransferKind => ({
+  Transfer: { token_id: tokenId, receiver_id: receiverId, amount, msg },
+});
+
+/** The proposal kinds these tests file. */
+export type ProposalKind = FunctionCallKind | TransferKind;
+
 /** A proposal as Sputnik's `get_proposal` returns it (the fields these tests read). */
 export interface ProposalView {
   readonly id: number;
