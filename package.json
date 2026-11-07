@@ -1,0 +1,24 @@
+{
+  "name": "headcount",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Screened reward payouts for Sputnik DAO and Trezu treasuries on NEAR",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "build:sputnik": "node scripts/build-sputnik.mjs",
+    "pretest": "npm run build:sputnik && node scripts/ensure-sandbox.mjs",
+    "test": "node --test ts/sandbox/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "binaryen": "123.0.0",
+    "near-api-js": "5.1.1",
+    "near-workspaces": "5.0.0",
+    "typescript": "5.9.2"
+  }
+}
