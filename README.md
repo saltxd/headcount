@@ -11,9 +11,9 @@ Built at NEAR HACKATHON. Track: Social Money.
 > Trezu itself gives that list; the DAO funds the round by vote, in NEAR or in a token; the screener
 > reads the chain and posts which recipients are linked; anyone pays the cleared recipients in
 > batches; the council releases or returns each held group by vote; and whatever nobody decides in
-> time goes back to the DAO. The screener runs against the sandbox chain (scenario 3); its mainnet
-> read-only mode is not built yet, and parts marked **[NOT BUILT YET]** describe the intended shape,
-> not working code. Nothing here claims something runs unless you can run it from the steps given.
+> time goes back to the DAO. The screener runs against the sandbox chain (scenario 3) and,
+> read-only, against mainnet through free keyless endpoints (`screen --trezu-list`); parts marked
+> **[NOT BUILT YET]** describe the intended shape, not working code. Nothing here claims something runs unless you can run it from the steps given.
 
 ---
 
@@ -45,7 +45,7 @@ round, and it can only pay accounts on that round's list or return money to the 
   -----------------------------------        ------------------              ---------------------------
   1. vote: FunctionCall configure(screener) -> config for this DAO
   2. requestor: create_round(list)          -> round id = Trezu's list id
-                                               <- reads the list ----------- 3. reads the chain (sandbox; mainnet mode NOT BUILT YET)
+                                               <- reads the list ----------- 3. reads the chain (sandbox, or mainnet read-only)
                                                post_verdict(groups) <------- only this account
   4. vote: FunctionCall that funds the round (the call Trezu's bulk payments already file)
   5. anyone: payout_batch                   -> pays cleared recipients, keeps held groups
