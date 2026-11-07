@@ -11,8 +11,11 @@
   "scripts": {
     "build:sputnik": "node scripts/build-sputnik.mjs",
     "build:contract": "node scripts/build-contract.mjs",
-    "pretest": "npm run build:sputnik && npm run build:contract && node scripts/ensure-sandbox.mjs",
+    "build": "npm run build:sputnik && npm run build:contract && node scripts/ensure-sandbox.mjs",
+    "pretest": "npm run build",
     "test": "node --test ts/test/*.test.ts ts/sandbox/*.test.ts",
+    "predemo": "npm run build",
+    "demo": "node ts/demo/demo.ts",
     "typecheck": "tsc --noEmit",
     "screen": "node ts/screener/cli.ts screen",
     "board": "node ts/screener/cli.ts board",
