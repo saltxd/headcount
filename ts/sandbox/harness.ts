@@ -172,6 +172,23 @@ export const ftTransferKind = (tokenId: string, receiverId: string, amount: stri
   },
 });
 
+/**
+ * A FunctionCall proposal for one call: the DAO calls `methodName` on `receiverId` with `args`,
+ * attaching `deposit` yoctoNEAR and `gasTgas` TGas.
+ */
+export const callKind = (
+  receiverId: string,
+  methodName: string,
+  args: unknown,
+  deposit: bigint,
+  gasTgas: number,
+): FunctionCallKind => ({
+  FunctionCall: {
+    receiver_id: receiverId,
+    actions: [{ method_name: methodName, args: b64json(args), deposit: String(deposit), gas: String(tgas(gasTgas)) }],
+  },
+});
+
 /** A proposal as Sputnik's `get_proposal` returns it (the fields these tests read). */
 export interface ProposalView {
   readonly id: number;

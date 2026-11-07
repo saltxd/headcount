@@ -10,7 +10,8 @@
   },
   "scripts": {
     "build:sputnik": "node scripts/build-sputnik.mjs",
-    "pretest": "npm run build:sputnik && node scripts/ensure-sandbox.mjs",
+    "build:contract": "node scripts/build-contract.mjs",
+    "pretest": "npm run build:sputnik && npm run build:contract && node scripts/ensure-sandbox.mjs",
     "test": "node --test --test-concurrency=1 ts/test/*.test.ts ts/sandbox/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
