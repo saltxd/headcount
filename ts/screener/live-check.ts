@@ -2,13 +2,15 @@
  * The opt-in live check, run by hand: `npm run screen:live`. It reads public DAOs (organizations,
  * never people) from the Sputnik factory on mainnet, screens them at 2 requests a second or fewer,
  * and fails unless the screen finishes and links none of them, because the factory and its key are
- * services. Read-only and keyless; not part of `npm test`, which never touches the network.
+ * services. Read-only and keyless; not part of `npm test`, whose tests never touch the network (its
+ * build makes one keyless mainnet read, the Sputnik factory bytes).
  *
  *   LIVE_FROM=0 LIVE_COUNT=6 LIVE_MAX_ROWS=100   (the defaults: the first six DAOs, which hold the factory's key)
  *
  * The factory's list only grows, so the same range is the same DAOs next week. A different range can
  * link a pair for a real reason: two DAOs that paid the same account are linked by S5, which is the
- * rule working, not the factory being mistaken for a link (positions 1 to 12 do exactly that: codame and hype both paid one account).
+ * rule working, not the factory being mistaken for a link (positions 1 to 12 do exactly that: two of
+ * those DAOs paid the same account).
  */
 
 import { fileURLToPath } from "node:url";

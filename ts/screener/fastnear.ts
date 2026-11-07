@@ -8,8 +8,13 @@
  *   api.fastnear.com        /v1/public_key/<key> (accounts holding it with full access)
  *
  * The sandbox adapter scans every block, so it sees everything. This one asks per account, so it
- * reads a bounded slice and says so: `caveats()` lists every place it stopped early. Every shortcut
- * is chosen to err toward treating an account as a service, which links fewer recipients, never more.
+ * reads a bounded slice and says so: `caveats()` lists every place it stopped early. Most shortcuts
+ * err toward treating an account as a service, which links fewer recipients: an account too busy to
+ * read counts as a service, and an implicit account that received NEAR counts as created. Two can
+ * link more than the sandbox reader would: FastNEAR's key index lists current holders only, so a key
+ * many accounts were created with and later removed is not a service here and can still link two
+ * recipients created with it; and an account deleted and created again is read as its first
+ * creation, where the block scan takes the latest.
  * A transaction is turned into the same `TxStatus` the block scan reads, so the receipt rules
  * (who created whom, which keys, which transfers) are the very same code.
  */
