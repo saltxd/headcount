@@ -1890,3 +1890,159 @@ fn scenario_13_every_unit_funded_is_paid_or_refunded_exactly_once_whatever_the_p
         ]
     );
 }
+
+// --- get_account_record: an account's record with one DAO, read from that DAO's rounds ----------
+
+fn record(h: &Headcount, dao: &str, name: &str) -> AccountRecord {
+    h.get_account_record(acc(dao), acc(&format!("{name}.test.near")), None, None)
+}
+
+/// (listed, held, paid, returned): the counts, without the paging fields.
+fn counts(r: &AccountRecord) -> (u32, u32, u32, u32) {
+    (
+        r.rounds_listed,
+        r.rounds_held,
+        r.rounds_paid,
+        r.rounds_returned,
+    )
+}
+
+/// Two rounds of five() for the DAO. Round 1 holds alice and bob; the council pays alice and
+/// returns bob's share; carol, dave and erin are paid. Round 2 holds no one; every transfer arrives
+/// but alice's, which fails and goes back to the DAO.
+fn two_settled_rounds() -> (Headcount, String, String) {
+    let (mut h, first) = screened_and_funded(TOKEN, vec![group(&["alice", "bob"], "same-funder")]);
+    pay_batch(&mut h, &first, 5);
+    ctx_results(results(&[OK, OK, OK]));
+    h.on_payouts(first.clone(), vec![2, 3, 4]);
+    decide(&mut h, &first, 1, released_one("alice"));
+    ctx_results(results(&[OK]));
+    h.on_refund(first.clone(), vec![1]);
+    pay_batch(&mut h, &first, 5);
+    ctx_results(results(&[OK]));
+    h.on_payouts(first.clone(), vec![0]);
+
+    ctx(REQUESTOR, near(100));
+    let second = h.create_round(acc(DAO), TOKEN.to_string(), five(), 1_794_009_600_001);
+    post(&mut h, &second, verdict(vec![]));
+    fund(&mut h, &second);
+    pay_batch(&mut h, &second, 5);
+    ctx_results(results(&[FAIL, OK, OK, OK, OK]));
+    h.on_payouts(second.clone(), vec![0, 1, 2, 3, 4]);
+    refund_at(&mut h, &second, NOW_SEC);
+    ctx_results(results(&[OK]));
+    h.on_refund(second.clone(), vec![0]);
+    (h, first, second)
+}
+
+#[test]
+fn an_account_in_no_round_has_an_empty_record() {
+    let h = configured();
+    assert_eq!(
+        record(&h, DAO, "alice"),
+        AccountRecord {
+            rounds_listed: 0,
+            rounds_held: 0,
+            rounds_paid: 0,
+            rounds_returned: 0,
+            rounds_read: 0,
+            rounds_total: 0
+        }
+    );
+}
+
+#[test]
+fn a_record_counts_the_daos_rounds_that_list_hold_pay_or_return_an_account() {
+    let (h, first, second) = two_settled_rounds();
+    assert!(
+        h.get_round(first)
+            .unwrap()
+            .payments
+            .iter()
+            .all(|p| matches!(p.state, Paid | Refunded))
+    );
+    assert!(
+        h.get_round(second)
+            .unwrap()
+            .payments
+            .iter()
+            .all(|p| matches!(p.state, Paid | Refunded))
+    );
+
+    assert_eq!(
+        counts(&record(&h, DAO, "alice")),
+        (2, 1, 1, 1),
+        "held and paid once, returned once"
+    );
+    assert_eq!(
+        counts(&record(&h, DAO, "bob")),
+        (2, 1, 1, 1),
+        "held and returned once, paid once"
+    );
+    assert_eq!(counts(&record(&h, DAO, "carol")), (2, 0, 2, 0));
+    assert_eq!(
+        counts(&record(&h, DAO, "frank")),
+        (0, 0, 0, 0),
+        "listed in neither"
+    );
+    let r = record(&h, DAO, "carol");
+    assert_eq!((r.rounds_read, r.rounds_total), (2, 2));
+}
+
+#[test]
+fn a_round_not_yet_screened_or_funded_counts_only_as_listed() {
+    let mut h = configured();
+    create(&mut h, NATIVE, five());
+    assert_eq!(counts(&record(&h, DAO, "alice")), (1, 0, 0, 0));
+}
+
+#[test]
+fn a_held_account_counts_as_held_before_the_council_decides() {
+    let (h, _) = screened_and_funded(NATIVE, two_groups());
+    assert_eq!(counts(&record(&h, DAO, "dave")), (1, 1, 0, 0));
+    assert_eq!(counts(&record(&h, DAO, "carol")), (1, 0, 0, 0));
+}
+
+#[test]
+fn records_are_kept_per_dao_so_another_account_screening_its_own_rounds_changes_nothing() {
+    // Any account can configure itself as a DAO and name itself screener. Its rounds and verdicts
+    // show in its own records, never in another DAO's.
+    let (mut h, _, _) = two_settled_rounds();
+    let before = record(&h, DAO, "carol");
+    const SELF_DAO: &str = "self-dao.test.near";
+    ctx(SELF_DAO, near(10));
+    h.configure(acc(SELF_DAO), acc(SELF_DAO), 2 * DAY, 2 * DAY);
+    ctx(SELF_DAO, near(100));
+    let own = h.create_round(acc(SELF_DAO), TOKEN.to_string(), five(), 1_794_009_600_000);
+    ctx(SELF_DAO, near(100));
+    h.post_verdict(own, verdict(vec![group(&["carol", "dave"], "same-funder")]));
+
+    assert_eq!(
+        record(&h, DAO, "carol"),
+        before,
+        "the DAO's record of carol is untouched"
+    );
+    assert_eq!(counts(&record(&h, SELF_DAO, "carol")), (1, 1, 0, 0));
+}
+
+#[test]
+fn a_record_can_be_read_in_pages_of_the_daos_rounds() {
+    let (h, _, _) = two_settled_rounds();
+    let alice = acc("alice.test.near");
+    let page = |from: u32, limit: u32| {
+        h.get_account_record(acc(DAO), alice.clone(), Some(from), Some(limit))
+    };
+    let first = page(0, 1);
+    let second = page(1, 1);
+    assert_eq!(
+        (counts(&first), first.rounds_read, first.rounds_total),
+        ((1, 1, 1, 0), 1, 2),
+        "round 1 only"
+    );
+    assert_eq!(
+        (counts(&second), second.rounds_read, second.rounds_total),
+        ((1, 0, 0, 1), 1, 2),
+        "round 2 only"
+    );
+    assert_eq!(page(2, 10).rounds_read, 0, "past the last round");
+}

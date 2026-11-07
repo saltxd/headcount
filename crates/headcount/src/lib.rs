@@ -348,6 +348,28 @@ pub struct RoundView {
     pub hold_deadline_sec: Option<u64>,
 }
 
+/// One account's record with one DAO, counted from that DAO's own rounds: what `get_account_record`
+/// returns. A round counts once per field, whatever happened to the account in it.
+#[near(serializers = [json])]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AccountRecord {
+    /// Rounds whose list names the account.
+    pub rounds_listed: u32,
+    /// Of those, rounds whose verdict held it in a linked group, whatever the council decided.
+    pub rounds_held: u32,
+    /// Rounds whose payment to it arrived.
+    pub rounds_paid: u32,
+    /// Rounds whose amount for it went back to the DAO instead.
+    pub rounds_returned: u32,
+    /// How many of the DAO's rounds this answer read (`limit` of them from `from_index`), and how
+    /// many the DAO has: when `rounds_read` is less, read the next page.
+    pub rounds_read: u32,
+    pub rounds_total: u32,
+}
+
+/// Rounds `get_account_record` reads when the caller gives no `limit`.
+pub const DEFAULT_RECORD_PAGE: u32 = 100;
+
 #[derive(BorshStorageKey)]
 #[near]
 enum StorageKey {
@@ -523,6 +545,60 @@ impl Headcount {
 
     pub fn get_verdict(&self, round_id: String) -> Option<PostedVerdict> {
         self.rounds.get(&round_id)?.verdict.clone()
+    }
+
+    /// `account_id`'s record with `dao_id`, counted from that DAO's rounds in creation order:
+    /// `limit` of them (100 if not given) from `from_index` (0 if not given). Kept per DAO on
+    /// purpose: any account can configure itself as a DAO and screen its own rounds, so a record
+    /// counts only what the named DAO's own screener and council did. A view: it is computed from the
+    /// rounds as stored, so it costs no storage and no call that pays anyone has to update it.
+    pub fn get_account_record(
+        &self,
+        dao_id: AccountId,
+        account_id: AccountId,
+        from_index: Option<u32>,
+        limit: Option<u32>,
+    ) -> AccountRecord {
+        let total = self.round_counts.get(&dao_id).copied().unwrap_or(0);
+        let from = from_index.unwrap_or(0);
+        let end = total.min(from.saturating_add(limit.unwrap_or(DEFAULT_RECORD_PAGE)));
+        let mut record = AccountRecord {
+            rounds_total: total,
+            ..AccountRecord::default()
+        };
+        for i in from..end {
+            let Some(round) = self
+                .round_index
+                .get(&(dao_id.clone(), i))
+                .and_then(|id| self.rounds.get(id))
+            else {
+                continue;
+            };
+            record.rounds_read += 1;
+            let Ok(k) = round
+                .payments
+                .binary_search_by(|p| p.recipient.as_str().cmp(account_id.as_str()))
+            else {
+                continue;
+            };
+            record.rounds_listed += 1;
+            let held = round.verdict.as_ref().is_some_and(|posted| {
+                posted
+                    .verdict
+                    .groups
+                    .iter()
+                    .any(|g| g.accounts.contains(&account_id))
+            });
+            if held {
+                record.rounds_held += 1;
+            }
+            match round.payments[k].state {
+                PaymentState::Paid => record.rounds_paid += 1,
+                PaymentState::Refunded => record.rounds_returned += 1,
+                _ => {}
+            }
+        }
+        record
     }
 
     /// Funds a NEAR round. Only the round's DAO can call it, attaching exactly the round's total,

@@ -70,6 +70,11 @@ which sends back a funded round that got no verdict within its verdict window, e
 council left undecided past the hold window (counted from the later of the verdict and the funding),
 and any failed payment. Each payment's state and each group's outcome stay on chain (`get_round`,
 `get_rounds`), and a round is settled when what was paid plus what went back equals what was funded.
+`get_account_record(dao_id, account_id)` counts, from one DAO's own rounds, how many listed an
+account, held it, paid it and returned its share. It is kept per DAO on purpose: any account can
+configure itself as a DAO and screen its own rounds, so a record shows only what that DAO's own
+screener and council did. It is a view computed from the stored rounds, so it costs no storage and
+no payout has to update it.
 
 **Why a separate contract.** Sputnik has no hook before a proposal executes, its roles combine
 with OR, and the vote that reaches the threshold executes the proposal in the same call (the first
@@ -121,7 +126,7 @@ cd headcount
 npm ci
 npm test        # 110 tests: the unit tests, then each sandbox file's scenarios, one story line each
 npm run demo    # one reward round, start to finish, told step by step
-cargo test      # the contract's 108 unit tests
+cargo test      # the contract's 114 unit tests
 ```
 
 `npm test` and `npm run demo` first run `npm run build`: fetch the factory's Sputnik DAO v3.2 bytes
@@ -226,6 +231,10 @@ no real network, keys or funds.
    Funded 114.275001 = paid 46.4 (6 recipients) + returned 67.875001 (10 recipients).
    Headcount holds 0 tokens. get_round keeps each payment's state and each group's outcome on chain:
      group 1 Expired, group 2 Expired, group 3 ReleasedAll, group 4 Expired.
+   get_account_record counts each account's rounds with this DAO, from those rounds:
+     nia.test.near: listed 1, held 1, paid 1, returned 0
+     3e93ca93... (farm A): listed 1, held 1, paid 0, returned 1
+     uma.test.near: listed 1, held 0, paid 1, returned 0
 
 Done in 11 s. Every step above was checked as it ran: a mismatch would have
 stopped the demo with an error.
@@ -241,7 +250,7 @@ file's lines together. The sandbox files print one story line per scenario:
 | `ts/sandbox/dao.test.ts` (4) | The DAO alone: it runs the factory's exact v3.2 bytes; a `FunctionCall` proposal passes on the second Approver vote and runs in that same transaction; a vote must carry the stored proposal kind back (`ERR_WRONG_KIND`); a Requestor cannot approve, and neither an Approver nor an Admin can file a payment |
 | `ts/sandbox/demo.test.ts` (1) | `npm run demo` with its narration collected instead of printed: every step checks out and the books close |
 | `ts/sandbox/headcount.test.ts` (20) | The design's scenarios 1, 2 and 4 to 13 against the real DAO, on verdicts written by hand (lines below). Each refused funding checks Headcount's own logged reason, not only the balances: a contract with no `ft_on_transfer` at all would also see tokens bounce. Every payout and refund is checked against the receiving account's balance, to the unit, and scenario 13 checks every round `get_rounds` lists |
-| `ts/sandbox/near-payout.test.ts` (4) | A round paid in NEAR: funded by a vote that attaches exactly its total; two named accounts paid exactly; six implicit accounts created by their own payments; a payment to an account that does not exist fails and goes back to the DAO to the yoctoNEAR; the council pays one held account and returns the other's share. The first batch gets gas for one account creation at its real cost, not for all nine |
+| `ts/sandbox/near-payout.test.ts` (4) | A round paid in NEAR: funded by a vote that attaches exactly its total; two named accounts paid exactly; six implicit accounts created by their own payments; a payment to an account that does not exist fails and goes back to the DAO to the yoctoNEAR; the council pays one held account and returns the other's share; then each account's record (`get_account_record`). The first batch gets gas for one account creation at its real cost, not for all nine |
 | `ts/sandbox/screener.test.ts` (2) | Scenario 3: the screener scans every block of the sandbox, holds exactly the four planted farms, clears every decoy, and posts its verdict |
 | `ts/sandbox/templates.test.ts` (3) | The three Trezu templates: each proposal filed exactly as Trezu's own engine built it, and what each vote did |
 | `ts/test/templates.test.ts`, `templates-cli.test.ts` (9) | The manifests against Trezu's format, their proposals against Trezu's own output to the byte, and `npm run templates` |
@@ -308,12 +317,13 @@ and 10 past a deadline in seconds, the DAO first votes its windows down to 60 se
 clock is moved forward with empty blocks rather than waited out; round16 keeps the 2-day windows it
 was created with.
 
-`cargo test` runs the contract's 108 unit tests on near-sdk's mocked VM: who may configure, the list
+`cargo test` runs the contract's 114 unit tests on near-sdk's mocked VM: who may configure, the list
 checks, storage charged to the caller and the rest of the deposit returned, every funding refusal,
 every verdict check, the three Trezu list-id vectors, and for payouts: batches in list order and
 within their gas, each transfer recorded paid or failed, nothing paid twice or while held, only the
-DAO deciding a group, every deadline to the second, and a round run through every path at once whose
-transfers add up to its total.
+DAO deciding a group, every deadline to the second, a round run through every path at once whose
+transfers add up to its total, and each account's record with a DAO, read in pages and untouched by
+another DAO's rounds.
 
 Set `NEAR_PRINT_LOGS=1` to see every receipt log and refusal the sandbox prints.
 
@@ -473,7 +483,7 @@ accepted by a human.** That applies to the scripts, the tests, the contract and 
 ```
 crates/headcount/src/lib.rs      the Headcount contract: configure, create_round, fund_round,
                                  ft_on_transfer, post_verdict, payout_batch, resolve_group,
-                                 refund_expired, views
+                                 refund_expired, views (get_round, get_rounds, get_account_record)
 crates/headcount/src/list_id.rs  Trezu's list id in Rust
 crates/headcount/src/tests.rs    the contract's unit tests (cargo test)
 fixtures/trezu-list-ids.json     ids Trezu's own generateListId computed for synthetic lists

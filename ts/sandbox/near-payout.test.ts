@@ -51,6 +51,16 @@ interface RoundView {
   readonly refunded: string;
 }
 
+/** `get_account_record`: an account's record with one DAO, counted from that DAO's rounds. */
+interface AccountRecordView {
+  readonly rounds_listed: number;
+  readonly rounds_held: number;
+  readonly rounds_paid: number;
+  readonly rounds_returned: number;
+  readonly rounds_read: number;
+  readonly rounds_total: number;
+}
+
 let worker: Worker | undefined;
 let dao: NearAccount;
 let headcount: NearAccount;
@@ -289,9 +299,26 @@ test("the council pays kim and returns lee's share; the books balance and Headco
   assert.equal(BigInt(round.paid) + BigInt(round.refunded), TOTAL, "paid + refunded = funded");
   const gained = (await freeNear(headcount.accountId)) - headcountFreeAtStart;
   assert.ok(gained >= 0n && gained < near("0.05"), `beyond its storage, Headcount kept ${gained} yoctoNEAR: gas rewards only`);
+
+  // Each account's record with this DAO, read from its rounds: listed, held, paid, returned.
+  const recordOf = async (account: string): Promise<number[]> => {
+    const r = await headcount.view<AccountRecordView>("get_account_record", { dao_id: dao.accountId, account_id: account });
+    assert.deepEqual([r.rounds_read, r.rounds_total], [1, 1], "the DAO's one round was read");
+    return [r.rounds_listed, r.rounds_held, r.rounds_paid, r.rounds_returned];
+  };
+  assert.deepEqual(await recordOf(ID("ana")), [1, 0, 1, 0]);
+  assert.deepEqual(await recordOf(implicit[0]!), [1, 0, 1, 0]);
+  assert.deepEqual(await recordOf(ID("kim")), [1, 1, 1, 0], "held, then paid by the council's decision");
+  assert.deepEqual(await recordOf(ID("lee")), [1, 1, 0, 1], "held, then returned");
+  assert.deepEqual(await recordOf(ID("ghost")), [1, 0, 0, 1], "its failed payment went back");
+  assert.deepEqual(await recordOf(alice.accountId), [0, 0, 0, 0], "not on the list");
   console.log(
     `  COUNCIL VOTE (proposal ${decided.id}): kim paid exactly ${nearText(AMOUNTS[ID("kim")]!)} NEAR, lee's ` +
       `${nearText(lee)} back to the DAO. BOOKS: paid ${nearText(paid)} + returned ` +
       `${nearText(BigInt(round.refunded))} = funded ${nearText(TOTAL)} NEAR; Headcount kept none of it`,
+  );
+  console.log(
+    "  RECORDS with dao.test.near (get_account_record): kim listed 1, held 1, paid 1; lee listed 1, held 1, " +
+      "returned 1; ghost listed 1, returned 1; ana listed 1, paid 1",
   );
 });

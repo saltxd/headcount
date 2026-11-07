@@ -371,10 +371,30 @@ export const runDemo = async (say: (line?: string) => void): Promise<DemoResult>
     assert.equal(await balanceOf(headcount.accountId), 0n, "Headcount holds none of the round's tokens");
     const paidAccounts = final.payments.filter((p) => p.state === "Paid").length;
     const returnedAccounts = final.payments.filter((p) => p.state === "Refunded").length;
+    const recordOf = async (account: string): Promise<string> => {
+      const r = await headcount.view<{ rounds_listed: number; rounds_held: number; rounds_paid: number; rounds_returned: number }>(
+        "get_account_record",
+        { dao_id: dao.accountId, account_id: account },
+      );
+      return `listed ${r.rounds_listed}, held ${r.rounds_held}, paid ${r.rounds_paid}, returned ${r.rounds_returned}`;
+    };
+    const farmAFirst = farm("A").accounts[0]!;
+    const records = {
+      nia: await recordOf(farmC[0]!),
+      farmA: await recordOf(farmAFirst),
+      uma: await recordOf(id("uma")),
+    };
+    assert.equal(records.nia, "listed 1, held 1, paid 1, returned 0");
+    assert.equal(records.farmA, "listed 1, held 1, paid 0, returned 1");
+    assert.equal(records.uma, "listed 1, held 0, paid 1, returned 0");
     step(10, "The books");
     line(`Funded ${tokens(total)} = paid ${tokens(paid)} (${paidAccounts} recipients) + returned ${tokens(returned)} (${returnedAccounts} recipients).`);
     line("Headcount holds 0 tokens. get_round keeps each payment's state and each group's outcome on chain:");
     line(`  ${final.groups.map((g) => `group ${g.group} ${g.state}`).join(", ")}.`);
+    line("get_account_record counts each account's rounds with this DAO, from those rounds:");
+    line(`  ${short(farmC[0]!)}: ${records.nia}`);
+    line(`  ${short(farmAFirst)} (farm A): ${records.farmA}`);
+    line(`  ${id("uma")}: ${records.uma}`);
 
     return {
       roundId,
