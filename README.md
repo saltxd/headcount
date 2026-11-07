@@ -6,13 +6,14 @@ Built at NEAR HACKATHON. Track: Social Money.
 
 > **Status (2026-11-07).** What runs today, in a local `near-workspaces` sandbox: the real
 > Sputnik DAO v3.2 contract, built from source at the commit NEAR's mainnet factory names for v3.2,
-> with the three roles Trezu gives every treasury, and next to it the first half of the Headcount
-> contract. A DAO names its screener by vote; a requestor turns a Trezu-format CSV into a round whose
-> id is the id Trezu itself gives that list; the DAO funds the round by vote, in NEAR or in a token;
-> the screener posts which recipients are linked. Paying the cleared recipients, council votes on
-> held groups, refunds, and the screener program that reads the chain are not built yet: parts marked
-> **[NOT BUILT YET]** describe the intended shape, not working code. Nothing here claims something
-> runs unless you can run it from the steps given.
+> with the three roles Trezu gives every treasury, and next to it the Headcount contract. A DAO
+> names its screener by vote; a requestor turns a Trezu-format CSV into a round whose id is the id
+> Trezu itself gives that list; the DAO funds the round by vote, in NEAR or in a token; the screener
+> posts which recipients are linked; anyone pays the cleared recipients in batches; the council
+> releases or returns each held group by vote; and whatever nobody decides in time goes back to the
+> DAO. The screener program that reads the chain is not built yet: the verdicts here are written by
+> hand, and parts marked **[NOT BUILT YET]** describe the intended shape, not working code. Nothing
+> here claims something runs unless you can run it from the steps given.
 
 ---
 
@@ -47,12 +48,24 @@ round, and it can only pay accounts on that round's list or return money to the 
                                                <- reads the list ----------- 3. reads the chain [NOT BUILT YET]
                                                post_verdict(groups) <------- only this account
   4. vote: FunctionCall that funds the round (the call Trezu's bulk payments already file)
-  5. anyone: payout_batch                   -> pays cleared recipients, keeps held groups [NOT BUILT YET]
-  6. vote: resolve_group, or after the hold window anyone calls refund_expired -> back to the DAO [NOT BUILT YET]
+  5. anyone: payout_batch                   -> pays cleared recipients, keeps held groups
+  6. vote: resolve_group, or after the hold window anyone calls refund_expired -> back to the DAO
 ```
 
-Steps 1, 2 and 4 run in the sandbox today, and so does the contract's side of step 3: only the DAO's
-named screener can post a verdict, once, within the round's window, about accounts on its list.
+Steps 1, 2, 4, 5 and 6 run in the sandbox today, and so does the contract's side of step 3: only the
+DAO's named screener can post a verdict, once, within the round's window, about accounts on its list.
+
+**Paying, deciding, returning.** Anyone can call `payout_batch`: it pays only recipients the verdict
+cleared or the council released, in list order, as many as the attached gas covers (100 TGas paid six
+token transfers in the sandbox; each `ft_transfer` burnt at most 1.75 TGas of the 10 it gets). One
+callback per batch records each transfer; one that fails, for example to a recipient who never
+registered with the token, is marked `Failed`, and its amount can then only go back to the DAO. Only
+the DAO itself can call `resolve_group`, so a held group takes a council vote: release all of it,
+release one account and return the rest, or return all of it. Anyone can call `refund_expired`,
+which sends back a funded round that got no verdict within its verdict window, every held group the
+council left undecided past the hold window (counted from the later of the verdict and the funding),
+and any failed payment. Each payment's state and each group's outcome stay on chain (`get_round`,
+`get_rounds`), and a round is settled when what was paid plus what went back equals what was funded.
 
 **Why a separate contract.** Sputnik has no hook before a proposal executes, its roles combine
 with OR, and the vote that reaches the threshold executes the proposal in the same call (the first
@@ -110,7 +123,7 @@ cargo test
 contract (`npm run build:contract`), puts neard 2.13.4 in place, then runs the tests. The first run
 takes a few minutes; most of it is compiling.
 
-**What you should see.** `npm test` prints the story, then `pass 20`, `fail 0`. The Headcount part:
+**What you should see.** `npm test` prints the story, then `pass 30`, `fail 0`. The Headcount part:
 
 ```
   dao.test.near: Sputnik 2.3.1 with Trezu roles; Headcount at headcount.test.near, which holds no role in the DAO
@@ -128,30 +141,56 @@ takes a few minutes; most of it is compiling.
 ✔ the screener's verdict holds the linked recipients, once: a second verdict is refused
   SENT BACK through NEP-141's refund: the DAO's vote in another token, alice's transfer, the DAO's vote one unit short
 ✔ scenario 12: token funding from the wrong token, a sender that is not the DAO, or a wrong amount goes back
-  REFUSED, deposit returned: the DAO's vote 1 yoctoNEAR short (proposal 3 Failed), NEAR for the token round (proposal 4 Failed), alice funding the DAO's round
+  RECONFIGURED by vote (proposal 3): 60-second windows for rounds created from now on; round16 keeps its 2 days
+✔ the DAO shortens its windows to 60 s by vote; round16 keeps the 2 days it was created with
+  REFUSED, deposit returned: the DAO's vote 1 yoctoNEAR short (proposal 4 Failed), NEAR for the token round (proposal 5 Failed), alice funding the DAO's round
 ✔ scenario 12: a NEAR deposit that is not exactly the DAO funding a NEAR round is refused
   FUNDED by vote: round16 with 114275001 of token.test.near, and the NEAR round with exactly 1 NEAR
 ✔ the right doors fund a round: the vote Trezu's template files (ft_transfer_call), and fund_round with the exact total
-  Transfer{msg}, deciding vote 250 TGas: funded; ft_on_transfer was given 114.51 TGas and the receipt burnt 2.24 TGas
-  Transfer{msg}, deciding vote 30 TGas: funded; ft_on_transfer was given 4.51 TGas and the receipt burnt 2.24 TGas
+  Transfer{msg}, deciding vote 250 TGas: funded; ft_on_transfer was given 114.51 TGas and the receipt burnt 2.31 TGas
+  Transfer{msg}, deciding vote 30 TGas: funded; ft_on_transfer was given 4.51 TGas and the receipt burnt 2.31 TGas
 ✔ a Sputnik Transfer proposal with msg also funds a round: Sputnik's 10 TGas is a floor, not a cap
+  PAID by an outsider in 2 batches (6 with 100 TGas, then 5): 10 cleared recipients got exactly their amounts; r16.test.near is not registered with the token, so its transfer failed and is kept for the DAO; the 5 held got nothing. Each ft_transfer burnt 1.75 TGas at most, the callback 1.90
+✔ scenario 6: once the vote Trezu's template files has funded round16, anyone pays its cleared recipients in batches; held ones are kept
+  RETURNED: r16.test.near's failed 2250000 went back to dao.test.near; nothing else moved
+✔ a payment that failed can only go back to the DAO: anyone sends it back at once
+  REFUSED: another payout (only the 5 held are left), and resolve_group from an outsider, the Requestor and the screener: only a DAO vote decides a held group
+✔ scenario 7: nobody can pay a held account, or decide a held group without a DAO vote
+  COUNCIL VOTE (proposal 10, Approved), two decisions in one FunctionCall: group 1 pays r01 once (10500000, paid by the next batch) and 26250000 went back to the DAO. Round16 is settled
+✔ the council decides both of round16's groups in one vote: group 1 pays r01 only, group 2 goes back
+  RELEASED by vote (proposal 12): farm C (r09, r10) paid 12400000; the 4 cleared were paid first; farms A, B and D (10 accounts) still held, and refund_expired REFUSED inside the hold window
+✔ scenario 8: on a fresh 60-second round, the council votes to release farm C (a couple who share a household); it is paid
+  EXPIRED: past the hold window, an outsider's refund_expired sent farms A, B and D (85375001) back; the DAO's balance rose by exactly that
+✔ scenario 9: farms A, B and D are left alone past the hold window; anyone sends them back, and the DAO is up by exactly that
+  RETURNED WHOLE after the verdict window: the NEAR round (the DAO's NEAR up by exactly 1 NEAR; a late verdict refused) and both 100-recipient rounds (200000 of the token)
+✔ scenario 10: rounds funded with no verdict go back whole once the verdict window closes
+  NEW ROUND 61ca51b12e35...: r09's amount +1 unit gives another id; it has no verdict, and paying it is refused
+✔ scenario 11: one amount edited after screening makes a new round; the old verdict does not apply
+  BOOKS BALANCE over all 6 rounds get_rounds lists: the 5 funded are settled with paid + refunded = funded, and the edited one was never funded. Headcount holds 0 of each token, and its NEAR beyond storage is up 0.00225 NEAR since deployment: its gas rewards
+✔ scenario 13: over every round Headcount lists, paid + refunded = funded, and Headcount keeps none of the money
 ```
 
 (`2.3.1` is the `sputnikdao2` crate version; the factory calls this release v3.2. Gas figures move
-by a few hundredths of a TGas from run to run.)
+by a few hundredths of a TGas from run to run, and the gas rewards in the last line by a little more.)
 
-The scenario numbers are the design's. Scenario 3 (the screener reads the chain) and scenarios 6 to
-11 and 13 (payouts, council votes, refunds) arrive with the parts marked [NOT BUILT YET].
+The scenario numbers are the design's. Every scenario but 3 runs, on verdicts written by hand; scenario
+3 (the screener reads the chain) arrives with the screener, marked [NOT BUILT YET]. To run scenarios 9
+and 10 past a deadline in seconds, the DAO first votes its windows down to 60 seconds, and the sandbox
+clock is moved forward with empty blocks rather than waited out; round16 keeps the 2-day windows it
+was created with.
 
 | Tests | What they show |
 |---|---|
 | `ts/sandbox/dao.test.ts` (3) | The DAO alone: a `FunctionCall` proposal passes on the second Approver vote and runs in that same transaction; a vote must carry the stored proposal kind back (`ERR_WRONG_KIND`); a Requestor cannot approve and neither an Approver nor an Admin can file a payment |
-| `ts/sandbox/headcount.test.ts` (10) | The scenarios above, against the real DAO. Each refused funding checks Headcount's own logged reason, not only the balances: a contract with no `ft_on_transfer` at all would also see tokens bounce |
+| `ts/sandbox/headcount.test.ts` (20) | The scenarios above, against the real DAO. Each refused funding checks Headcount's own logged reason, not only the balances: a contract with no `ft_on_transfer` at all would also see tokens bounce. Every payout and refund is checked against the receiving account's balance, to the unit, and scenario 13 checks every round `get_rounds` lists |
 | `ts/test/list-id.test.ts` (7) | The TypeScript list id against Trezu's own ids, and the CSV parser: Trezu's two columns, amounts in whole tokens, refusing rather than rounding an amount with more decimals than the token has |
 
-`cargo test` runs the contract's 62 unit tests on near-sdk's mocked VM: who may configure, the list
+`cargo test` runs the contract's 106 unit tests on near-sdk's mocked VM: who may configure, the list
 checks, storage charged to the caller and the rest of the deposit returned, every funding refusal,
-every verdict check, and the three Trezu list-id vectors.
+every verdict check, the three Trezu list-id vectors, and for payouts: batches in list order and
+within their gas, each transfer recorded paid or failed, nothing paid twice or while held, only the
+DAO deciding a group, every deadline to the second, and a round run through every path at once whose
+transfers add up to its total.
 
 Set `NEAR_PRINT_LOGS=1` to see every receipt log and refusal the sandbox prints.
 
@@ -228,7 +267,8 @@ accepted by a human.** That applies to the scripts, the tests, the contract and 
 
 ```
 crates/headcount/src/lib.rs      the Headcount contract: configure, create_round, fund_round,
-                                 ft_on_transfer, post_verdict, views
+                                 ft_on_transfer, post_verdict, payout_batch, resolve_group,
+                                 refund_expired, views
 crates/headcount/src/list_id.rs  Trezu's list id in Rust
 crates/headcount/src/tests.rs    the contract's unit tests (cargo test)
 fixtures/trezu-list-ids.json     ids Trezu's own generateListId computed for synthetic lists
