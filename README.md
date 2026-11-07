@@ -6,7 +6,7 @@ Built at NEAR HACKATHON. Track: Social Money.
 
 ```bash
 git clone https://github.com/saltxd/headcount && cd headcount
-npm ci && npm test   # 115 tests, about a minute from a fresh clone (Node 22.18+, rustup; macOS arm64 or Linux x86-64)
+npm ci && npm test   # 125 tests, about a minute from a fresh clone (Node 22.18+, rustup; macOS arm64 or Linux x86-64)
 npm run demo         # one reward round, start to finish, told step by step
 cargo test           # the contract's 122 unit tests
 ```
@@ -164,9 +164,11 @@ forfeited.
 - NEAR transfers under 0.01 NEAR are ignored. Only plain NEAR transfers and token transfers the
   account itself made count, so NEAR attached to a contract call, and tokens a contract moves on an
   account's behalf, are not seen as direct transfers or shared collectors.
-- The sandbox reader needs every block from genesis. Mainnet mode reads the newest 400 transactions
-  per account and role, counts a busier account as a service, and differs from the sandbox reader in
-  two more ways (see "Mainnet, read-only").
+- The sandbox reader needs every block from genesis. NEAR skips a height now and then, more often
+  on a busy machine; the reader accepts a height with no block only when the blocks around it prove
+  the skip (each block names the one before it, by hash), and otherwise stops. Mainnet mode reads the
+  newest 400 transactions per account and role, counts a busier account as a service, and differs
+  from the sandbox reader in two more ways (see "Mainnet, read-only").
 
 ---
 
@@ -182,7 +184,7 @@ mainnet factory. No NEAR account, keys or funds.
 git clone https://github.com/saltxd/headcount
 cd headcount
 npm ci
-npm test        # 115 tests: the unit tests, then each sandbox file's scenarios, one story line each
+npm test        # 125 tests: the unit tests, then each sandbox file's scenarios, one story line each
 npm run demo    # one reward round, start to finish, told step by step
 cargo test      # the contract's 122 unit tests
 ```
@@ -304,7 +306,7 @@ stopped the demo with an error.
 
 ### What `npm test` prints
 
-`npm test` ends with `pass 115` and `fail 0`. Node runs the test files side by side and prints each
+`npm test` ends with `pass 125` and `fail 0`. Node runs the test files side by side and prints each
 file's lines together. The sandbox files print one story line per scenario:
 
 | Tests | What they show |
@@ -318,8 +320,9 @@ file's lines together. The sandbox files print one story line per scenario:
 | `ts/sandbox/templates.test.ts` (3) | The three Trezu templates: each proposal filed exactly as Trezu's own engine built it, and what each vote did |
 | `ts/test/templates.test.ts`, `templates-cli.test.ts` (9) | The manifests against Trezu's format, their proposals against Trezu's own output to the byte, and `npm run templates` |
 | `ts/test/list-id.test.ts` (7) | The TypeScript list id against Trezu's own ids, and the CSV parser: Trezu's two columns, amounts in whole tokens, refusing rather than rounding an amount with more decimals than the token has |
-| `ts/test/screener.test.ts`, `block-scan.test.ts` (20) | The screen's rule on in-memory chains, and the sandbox block scan on hand-written transactions |
+| `ts/test/screener.test.ts`, `block-scan.test.ts` (24) | The screen's rule on in-memory chains, and the sandbox block scan on hand-written transactions and on a pretend node: a height NEAR skipped (passed over, proven by the next block's link), a block the node lost or one off the chain (refused), a timeout (asked again) |
 | `ts/test/fastnear.test.ts`, `mainnet-screen.test.ts`, `paced-fetch.test.ts`, `screener-cli.test.ts`, `trezu-list.test.ts` (40) | Mainnet mode against a pretend FastNEAR: the reader, the pacing, the CLI and board, and Trezu's `view_list` |
+| `ts/test/rpc.test.ts`, `send.test.ts` (6) | The JSON-RPC client keeps NEAR's error name whatever the HTTP status (neard sends some with 408, 422 or 500), and the sandbox sender asks a slow node again for a transaction's outcome, with growing pauses and a deadline |
 
 <details>
 <summary>The story lines <code>ts/sandbox/headcount.test.ts</code> prints</summary>
