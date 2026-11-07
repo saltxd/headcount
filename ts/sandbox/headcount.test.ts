@@ -20,12 +20,14 @@ import type { NearAccount } from "near-workspaces";
 
 import { listId, parseTrezuCsv, type Payment } from "../src/list-id.ts";
 import {
+  b64json,
   callKind,
   expectReject,
   quietSandboxLogs,
   tgas,
   transferKind,
   trezuPolicy,
+  type ActionCall,
   type FunctionCallKind,
   type ProposalKind,
   type ProposalView,
@@ -74,17 +76,38 @@ interface PostedVerdict {
   readonly verdict: Verdict;
 }
 
+/** Where a payment stands, as the contract's `PaymentState` names it. */
+type PaymentState = "Pending" | "Held" | "Released" | "Paying" | "Paid" | "Failed" | "Refunding" | "Refunded";
+
+interface GroupView {
+  readonly group: number;
+  readonly accounts: readonly string[];
+  readonly state: "Open" | "ReleasedAll" | "ReleasedOne" | "Refunded" | "Expired";
+  readonly released: string | null;
+  readonly decided_at_sec: number | null;
+}
+
 interface RoundView {
   readonly round_id: string;
   readonly dao_id: string;
   readonly token_id: string;
-  readonly payments: readonly { readonly recipient: string; readonly amount: string; readonly state: string }[];
+  readonly payments: readonly { readonly recipient: string; readonly amount: string; readonly state: PaymentState }[];
   readonly total: string;
   readonly creator_id: string;
   readonly storage_deposit: string;
+  readonly verdict_window_sec: number;
+  readonly hold_window_sec: number;
   readonly funded_at_sec: number | null;
   readonly verdict: PostedVerdict | null;
+  readonly groups: readonly GroupView[];
+  readonly paid: string;
+  readonly refunded: string;
+  readonly verdict_deadline_sec: number;
+  readonly hold_deadline_sec: number | null;
 }
+
+/** The council's decision on a held group, as `resolve_group` takes it. */
+type Decision = "ReleaseAll" | "Refund" | { readonly ReleaseOne: { readonly account_id: string } };
 
 /** The sandbox round's vector: the id Trezu's own generateListId gave this list. */
 const sandboxVector = (() => {
@@ -115,6 +138,8 @@ let screener: NearAccount;
 let alice: NearAccount;
 /** The 16-recipient token round scenario 2 creates; later scenarios act on it. */
 let round16 = "";
+/** Headcount's NEAR beyond what its storage locks, before any round exists (scenario 13 compares). */
+let headcountFreeAtStart = 0n;
 
 before(async () => {
   for (const wasm of Object.values(WASM)) {
@@ -166,6 +191,7 @@ before(async () => {
   for (const t of [token, otherToken]) {
     await root.call(t, "storage_deposit", { account_id: headcount.accountId }, { attachedDeposit: BigInt(parseNEAR("0.01")) });
   }
+  headcountFreeAtStart = await freeNear(headcount);
 
   console.log(
     `  ${dao.accountId}: Sputnik ${await dao.view<string>("version")} with Trezu roles; ` +
@@ -211,14 +237,20 @@ const assertSentBack = (logs: readonly string[], why: string): void => {
   assert.ok(logs.includes(line), `expected the log line\n  ${line}\ngot\n  ${logs.join("\n  ")}`);
 };
 
-const configureKind = (): FunctionCallKind =>
+const configureKind = (windowSec: number = 2 * DAY): FunctionCallKind =>
   callKind(
     headcount.accountId,
     "configure",
-    { dao_id: dao.accountId, screener_id: screener.accountId, verdict_window_sec: 2 * DAY, hold_window_sec: 2 * DAY },
+    { dao_id: dao.accountId, screener_id: screener.accountId, verdict_window_sec: windowSec, hold_window_sec: windowSec },
     BigInt(parseNEAR("0.01")),
     30,
   );
+
+/**
+ * The windows the DAO moves to before the NEAR round is created, so that scenarios 9 and 10 can run
+ * past a deadline in seconds: the sandbox clock is moved forward rather than waited out.
+ */
+const SHORT_WINDOW_SEC = 60;
 
 test("scenario 1: the DAO names its screener through a FunctionCall proposal and two approvals", async () => {
   const [first, second] = approvers as [NearAccount, NearAccount];
@@ -331,6 +363,8 @@ const createRound = (tokenId: string, payments: readonly Payment[], timestamp: n
 /** The NEAR round scenario 12 creates: 1 NEAR to three recipients. */
 let nearRound = "";
 const NEAR_ROUND_TOTAL = BigInt(parseNEAR("1"));
+/** The two 100-recipient token rounds the Transfer{msg} test funds and nobody screens. */
+const transferRounds: string[] = [];
 
 test("scenario 4: an account that is not the DAO's screener cannot post a verdict", async () => {
   await expectReject(async () => postVerdict(treasurer, round16, await handVerdict([])), `${treasurer.accountId} is not this DAO's screener`);
@@ -400,6 +434,21 @@ test("scenario 12: token funding from the wrong token, a sender that is not the 
   assert.equal((await getRound(round16))?.funded_at_sec, null);
   console.log(
     "  SENT BACK through NEP-141's refund: the DAO's vote in another token, alice's transfer, the DAO's vote one unit short",
+  );
+});
+
+test("the DAO shortens its windows to 60 s by vote; round16 keeps the 2 days it was created with", async () => {
+  const id = await passVote(configureKind(SHORT_WINDOW_SEC), "Shorten the verdict and hold windows to 60 seconds");
+  assert.equal((await getProposal(id)).status, "Approved");
+  assert.deepEqual(await getConfig(), {
+    screener_id: screener.accountId,
+    verdict_window_sec: SHORT_WINDOW_SEC,
+    hold_window_sec: SHORT_WINDOW_SEC,
+  });
+  const round = await getRound(round16);
+  assert.deepEqual([round?.verdict_window_sec, round?.hold_window_sec], [2 * DAY, 2 * DAY], "a round keeps its windows");
+  console.log(
+    `  RECONFIGURED by vote (proposal ${id}): 60-second windows for rounds created from now on; round16 keeps its 2 days`,
   );
 });
 
@@ -507,6 +556,7 @@ test("a Sputnik Transfer proposal with msg also funds a round: Sputnik's 10 TGas
       { dao_id: dao.accountId, token_id: token.accountId, payments, timestamp: sandboxVector.timestamp + 100 + i },
       { attachedDeposit: BigInt(parseNEAR("0.5")), gas: tgas(300) },
     );
+    transferRounds.push(roundId);
     const daoToken = await balanceOf(token, dao);
     const hcToken = await balanceOf(token, headcount);
 
@@ -526,4 +576,400 @@ test("a Sputnik Transfer proposal with msg also funds a round: Sputnik's 10 TGas
         `and the receipt burnt ${gas.burnt.toFixed(2)} TGas`,
     );
   }
+});
+
+// --- Nov 7: payouts in batches, the council's decisions, deadlines, and the books ---------------
+
+/** Never registers with round16's token, so its payout fails and the money has to go back. */
+const UNREGISTERED = "r16.test.near";
+
+/** Round16's list again, at a new timestamp: a fresh 60-second round with four planted farms. */
+let farmsRound = "";
+const FARMS = {
+  A: ["r01", "r02", "r03", "r04", "r05"],
+  B: ["r06", "r07", "r08"],
+  C: ["r09", "r10"],
+  D: ["r11", "r12"],
+} as const;
+
+const tokenBalance = async (t: NearAccount, accountId: string): Promise<bigint> =>
+  BigInt(await t.view<string>("ft_balance_of", { account_id: accountId }));
+
+/** NEAR an account holds beyond what its storage locks (10^19 yoctoNEAR a byte). */
+async function freeNear(who: NearAccount): Promise<bigint> {
+  const account = await worker!.provider.viewAccount(who.accountId, { finality: "final" });
+  return BigInt(account.amount) - BigInt(account.storage_usage) * 10n ** 19n;
+}
+
+const amountOf = (round: RoundView, recipient: string): bigint => {
+  const payment = round.payments.find((p) => p.recipient === recipient);
+  if (!payment) throw new Error(`${recipient} is not on round ${round.round_id}`);
+  return BigInt(payment.amount);
+};
+
+const sumOf = (round: RoundView, recipients: readonly string[]): bigint =>
+  recipients.reduce((sum, r) => sum + amountOf(round, r), 0n);
+
+const accountsOf = (names: readonly string[]): string[] => names.map((n) => `${n}.test.near`);
+
+/** Registers `accounts` with the token in one transaction, as any NEP-141 recipient must be. */
+const registerOnToken = async (accounts: readonly string[]): Promise<void> => {
+  let tx = worker!.rootAccount.batch(token);
+  for (const accountId of accounts) {
+    tx = tx.functionCall(
+      "storage_deposit",
+      { account_id: accountId, registration_only: true },
+      { attachedDeposit: BigInt(parseNEAR("0.01")), gas: tgas(10) },
+    );
+  }
+  const result = await tx.transact();
+  assert.ok(result.succeeded, `registering ${accounts.length} accounts failed: ${result.summary()}`);
+};
+
+/**
+ * Alice, who holds no role anywhere, pays the next batch: anyone can. Returns how many payable
+ * recipients are left, and the transaction.
+ */
+const payoutBatch = async (roundId: string, limit: number, gasTgas = 300) => {
+  const result = await alice.callRaw(headcount, "payout_batch", { round_id: roundId, limit }, { gas: tgas(gasTgas) });
+  assert.ok(result.succeeded, `payout_batch failed: ${result.receiptFailureMessages.join("; ")}`);
+  return { left: result.parseResult<number>(), hash: result.result.transaction.hash };
+};
+
+const refundExpired = (roundId: string): Promise<unknown> =>
+  alice.call(headcount, "refund_expired", { round_id: roundId }, { gas: tgas(100) });
+
+/** One `resolve_group` call inside a DAO FunctionCall proposal. */
+const resolveAction = (roundId: string, group: number, decision: Decision): ActionCall => ({
+  method_name: "resolve_group",
+  args: b64json({ round_id: roundId, group, decision }),
+  deposit: "0",
+  gas: String(tgas(60)),
+});
+
+const resolveKind = (...actions: ActionCall[]): FunctionCallKind => ({
+  FunctionCall: { receiver_id: headcount.accountId, actions },
+});
+
+const isSettled = (round: RoundView): boolean => round.payments.every((p) => p.state === "Paid" || p.state === "Refunded");
+
+/** The sandbox's JSON-RPC, for the methods near-workspaces does not type. */
+const rpc = <T>(method: string, params: object): Promise<T> =>
+  (worker!.provider as unknown as { sendJsonRpc<R>(method: string, params: object): Promise<R> }).sendJsonRpc<T>(
+    method,
+    params,
+  );
+
+/** The sandbox clock at the latest block, in unix seconds. */
+const chainNowSec = async (): Promise<number> => {
+  const block = await rpc<{ header: { timestamp_nanosec: string } }>("block", { finality: "optimistic" });
+  return Number(BigInt(block.header.timestamp_nanosec) / 1_000_000_000n);
+};
+
+/** Moves the sandbox clock past `deadlineSec` with empty blocks (about 1.3 s each) instead of waiting. */
+const passDeadline = async (deadlineSec: number): Promise<void> => {
+  for (let i = 0; i < 10 && (await chainNowSec()) <= deadlineSec + 1; i += 1) {
+    await worker!.provider.fastForward(Math.max(5, deadlineSec + 2 - (await chainNowSec())));
+  }
+  assert.ok((await chainNowSec()) > deadlineSec + 1, "the sandbox clock is past the deadline");
+};
+
+interface ReceiptGas {
+  readonly receiver: string;
+  readonly method: string | undefined;
+  readonly attached: number;
+  readonly burnt: number;
+}
+
+/** Every receipt of a transaction: who ran it, which method, the gas it was given and burnt (TGas). */
+const receiptsOf = async (txHash: string, signerId: string): Promise<ReceiptGas[]> => {
+  const tx = await rpc<TxReceipts>("EXPERIMENTAL_tx_status", {
+    tx_hash: txHash,
+    sender_account_id: signerId,
+    wait_until: "FINAL",
+  });
+  return (tx.receipts ?? []).map((r) => {
+    const call = r.receipt.Action?.actions.map((a) => a["FunctionCall"]).find((f) => f?.method_name);
+    const burnt = tx.receipts_outcome.find((o) => o.id === r.receipt_id)?.outcome.gas_burnt ?? NaN;
+    return { receiver: r.receiver_id, method: call?.method_name, attached: (call?.gas ?? 0) / 1e12, burnt: burnt / 1e12 };
+  });
+};
+
+test("scenario 6: once the vote Trezu's template files has funded round16, anyone pays its cleared recipients in batches; held ones are kept", async () => {
+  const round = (await getRound(round16))!;
+  assert.ok(round.funded_at_sec, "funded earlier by the DAO's ft_transfer_call vote");
+  const cleared = round.payments.filter((p) => p.state === "Pending").map((p) => p.recipient);
+  assert.equal(cleared.length, 11);
+  await registerOnToken(round.payments.map((p) => p.recipient).filter((r) => r !== UNREGISTERED));
+  const before = new Map<string, bigint>();
+  for (const p of round.payments) before.set(p.recipient, await tokenBalance(token, p.recipient));
+  const hcBefore = await tokenBalance(token, headcount.accountId);
+
+  // Gas decides the first batch's size: the contract pays what 100 TGas covers at protocol 86's fees.
+  const first = await payoutBatch(round16, 100, 100);
+  const firstPaid = cleared.length - first.left;
+  assert.ok(firstPaid >= 2 && firstPaid < cleared.length, `a 100 TGas call pays part of the round, not ${firstPaid}`);
+  const gas = await receiptsOf(first.hash, alice.accountId);
+  const transfers = gas.filter((r) => r.method === "ft_transfer");
+  const callback = gas.find((r) => r.method === "on_payouts");
+  assert.equal(transfers.length, firstPaid);
+  assert.ok(callback, "one callback for the whole batch");
+  const ftBurnt = Math.max(...transfers.map((r) => r.burnt));
+  assert.ok(ftBurnt < 10, `each ft_transfer burnt under its 10 TGas: ${ftBurnt}`);
+  assert.ok(callback.burnt < 10, `the callback burnt under its 10 TGas of static gas: ${callback.burnt}`);
+  const second = await payoutBatch(round16, 100);
+  assert.equal(second.left, 0);
+
+  const after = (await getRound(round16))!;
+  for (const p of after.payments) {
+    const got = (await tokenBalance(token, p.recipient)) - (before.get(p.recipient) ?? 0n);
+    const expected: [PaymentState, bigint] =
+      p.recipient === UNREGISTERED
+        ? ["Failed", 0n]
+        : cleared.includes(p.recipient)
+          ? ["Paid", BigInt(p.amount)]
+          : ["Held", 0n];
+    assert.deepEqual([p.state, got], expected, p.recipient);
+  }
+  const paid = sumOf(after, cleared.filter((r) => r !== UNREGISTERED));
+  assert.equal(after.paid, String(paid));
+  assert.equal(hcBefore - (await tokenBalance(token, headcount.accountId)), paid, "only what was paid left Headcount");
+  console.log(
+    `  PAID by an outsider in 2 batches (${firstPaid} with 100 TGas, then ${cleared.length - firstPaid}): ` +
+      `10 cleared recipients got exactly their amounts; ${UNREGISTERED} is not registered with the token, so its ` +
+      `transfer failed and is kept for the DAO; the 5 held got nothing. Each ft_transfer burnt ${ftBurnt.toFixed(2)} ` +
+      `TGas at most, the callback ${callback.burnt.toFixed(2)}`,
+  );
+});
+
+test("a payment that failed can only go back to the DAO: anyone sends it back at once", async () => {
+  const round = (await getRound(round16))!;
+  const daoBefore = await balanceOf(token, dao);
+  await refundExpired(round16);
+
+  const share = amountOf(round, UNREGISTERED);
+  assert.equal((await balanceOf(token, dao)) - daoBefore, share, "the DAO got exactly r16's share back");
+  const after = (await getRound(round16))!;
+  assert.equal(after.payments.find((p) => p.recipient === UNREGISTERED)?.state, "Refunded");
+  assert.equal(after.refunded, String(share));
+  assert.equal(after.payments.filter((p) => p.state === "Held").length, 5, "the held groups wait: 2 days to go");
+  console.log(`  RETURNED: ${UNREGISTERED}'s failed ${share} went back to ${dao.accountId}; nothing else moved`);
+});
+
+test("scenario 7: nobody can pay a held account, or decide a held group without a DAO vote", async () => {
+  const held = (await getRound(round16))!.payments.filter((p) => p.state === "Held").map((p) => p.recipient);
+  await expectReject(
+    () => alice.call(headcount, "payout_batch", { round_id: round16, limit: 100 }, { gas: tgas(100) }),
+    "its 5 held recipient(s) wait for a council vote",
+  );
+  for (const who of [alice, treasurer, screener]) {
+    await expectReject(
+      () =>
+        who.call(
+          headcount,
+          "resolve_group",
+          { round_id: round16, group: 1, decision: "ReleaseAll" satisfies Decision },
+          { gas: tgas(100) },
+        ),
+      `only ${dao.accountId} can resolve a held group of its round: file a FunctionCall proposal on the DAO`,
+    );
+  }
+  const round = (await getRound(round16))!;
+  assert.deepEqual(
+    round.payments.filter((p) => p.state === "Held").map((p) => p.recipient),
+    held,
+  );
+  assert.ok(round.groups.every((g) => g.state === "Open"));
+  for (const r of held) assert.equal(await tokenBalance(token, r), 0n, `${r} got nothing`);
+  console.log(
+    "  REFUSED: another payout (only the 5 held are left), and resolve_group from an outsider, the Requestor " +
+      "and the screener: only a DAO vote decides a held group",
+  );
+});
+
+test("the council decides both of round16's groups in one vote: group 1 pays r01 only, group 2 goes back", async () => {
+  const round = (await getRound(round16))!;
+  const daoBefore = await balanceOf(token, dao);
+  const r01Before = await tokenBalance(token, "r01.test.near");
+
+  const id = await passVote(
+    resolveKind(
+      resolveAction(round16, 1, { ReleaseOne: { account_id: "r01.test.near" } }),
+      resolveAction(round16, 2, "Refund"),
+    ),
+    "Group 1: pay r01 once. Group 2: back to the treasury.",
+  );
+  assert.equal((await getProposal(id)).status, "Approved");
+  const back = sumOf(round, accountsOf(["r02", "r05", "r09", "r13"]));
+  assert.equal((await balanceOf(token, dao)) - daoBefore, back, "r02 and group 2 are back with the DAO, exactly");
+  const decided = (await getRound(round16))!;
+  assert.deepEqual(
+    decided.groups.map((g) => [g.state, g.released]),
+    [
+      ["ReleasedOne", "r01.test.near"],
+      ["Refunded", null],
+    ],
+  );
+
+  assert.equal((await payoutBatch(round16, 100)).left, 0);
+  assert.equal((await tokenBalance(token, "r01.test.near")) - r01Before, amountOf(round, "r01.test.near"));
+  const settled = (await getRound(round16))!;
+  assert.ok(isSettled(settled), "every payment of round16 is paid or back with the DAO");
+  assert.equal(BigInt(settled.paid) + BigInt(settled.refunded), BigInt(settled.total));
+  console.log(
+    `  COUNCIL VOTE (proposal ${id}, Approved), two decisions in one FunctionCall: group 1 pays r01 once ` +
+      `(${amountOf(round, "r01.test.near")}, paid by the next batch) and ${back} went back to the DAO. Round16 is settled`,
+  );
+});
+
+test("scenario 8: on a fresh 60-second round, the council votes to release farm C (a couple who share a household); it is paid", async () => {
+  await registerOnToken([UNREGISTERED]);
+  const payments = parseTrezuCsv(readFileSync(join(FIXTURES, "round-16.csv"), "utf8"), DECIMALS);
+  farmsRound = await createRound(token.accountId, payments, sandboxVector.timestamp + 2);
+  await postVerdict(
+    screener,
+    farmsRound,
+    await handVerdict([
+      linked(FARMS.A, "same-funder"),
+      linked(FARMS.B, "shared-key"),
+      linked(FARMS.C, "direct-transfer"),
+      linked(FARMS.D, "shared-collector"),
+    ]),
+  );
+  const round = (await getRound(farmsRound))!;
+  assert.equal(round.hold_window_sec, SHORT_WINDOW_SEC);
+  await passVote(ftTransferCall(token, BigInt(round.total), farmsRound), "Fund the screened round");
+  // Within the hold window, nothing held can be sent back: only a council vote can decide it.
+  await expectReject(() => refundExpired(farmsRound), "held groups wait for a council vote until");
+  const cleared = accountsOf(["r13", "r14", "r15", "r16"]);
+  const clearedBefore = await Promise.all(cleared.map((r) => tokenBalance(token, r)));
+  assert.equal((await payoutBatch(farmsRound, 100)).left, 0, "the four cleared recipients are paid");
+  for (const [i, r] of cleared.entries()) {
+    assert.equal((await tokenBalance(token, r)) - (clearedBefore[i] ?? 0n), amountOf(round, r), `${r} is paid`);
+  }
+
+  const farmC = accountsOf(FARMS.C);
+  const cBefore = await Promise.all(farmC.map((r) => tokenBalance(token, r)));
+  const id = await passVote(
+    resolveKind(resolveAction(farmsRound, 3, "ReleaseAll")),
+    "Release farm C: a couple who share a household",
+  );
+  assert.equal((await getProposal(id)).status, "Approved");
+  assert.equal((await getRound(farmsRound))!.groups[2]?.state, "ReleasedAll");
+  assert.equal((await payoutBatch(farmsRound, 100)).left, 0);
+  for (const [i, r] of farmC.entries()) {
+    assert.equal((await tokenBalance(token, r)) - (cBefore[i] ?? 0n), amountOf(round, r), `${r} is paid`);
+  }
+  const after = (await getRound(farmsRound))!;
+  assert.deepEqual(
+    after.payments.filter((p) => p.state === "Held").map((p) => p.recipient),
+    accountsOf([...FARMS.A, ...FARMS.B, ...FARMS.D]),
+  );
+  console.log(
+    `  RELEASED by vote (proposal ${id}): farm C (r09, r10) paid ${sumOf(round, farmC)}; the 4 cleared were ` +
+      `paid first; farms A, B and D (10 accounts) still held, and refund_expired REFUSED inside the hold window`,
+  );
+});
+
+test("scenario 9: farms A, B and D are left alone past the hold window; anyone sends them back, and the DAO is up by exactly that", async () => {
+  const round = (await getRound(farmsRound))!;
+  const deadline = round.hold_deadline_sec;
+  assert.ok(deadline, "a funded, screened round has a hold deadline");
+  await passDeadline(deadline);
+
+  const daoBefore = await balanceOf(token, dao);
+  await refundExpired(farmsRound);
+  const back = sumOf(round, accountsOf([...FARMS.A, ...FARMS.B, ...FARMS.D]));
+  assert.equal((await balanceOf(token, dao)) - daoBefore, back, "the DAO's balance is up by exactly the three farms");
+  const after = (await getRound(farmsRound))!;
+  assert.deepEqual(
+    after.groups.map((g) => g.state),
+    ["Expired", "Expired", "ReleasedAll", "Expired"],
+  );
+  assert.ok(isSettled(after));
+  assert.equal(BigInt(after.paid) + BigInt(after.refunded), BigInt(after.total));
+  console.log(
+    `  EXPIRED: past the hold window, an outsider's refund_expired sent farms A, B and D (${back}) back; ` +
+      `the DAO's balance rose by exactly that`,
+  );
+});
+
+test("scenario 10: rounds funded with no verdict go back whole once the verdict window closes", async () => {
+  const nearView = (await getRound(nearRound))!;
+  assert.equal(nearView.verdict, null);
+  await passDeadline(nearView.verdict_deadline_sec);
+  await expectReject(async () => postVerdict(screener, nearRound, await handVerdict([])), "the verdict window closed");
+
+  const daoNear = await nearOf(dao);
+  await refundExpired(nearRound);
+  assert.equal((await nearOf(dao)) - daoNear, NEAR_ROUND_TOTAL, "the DAO's NEAR is up by exactly the round's 1 NEAR");
+
+  const daoToken = await balanceOf(token, dao);
+  let back = 0n;
+  for (const id of transferRounds) {
+    const round = (await getRound(id))!;
+    await passDeadline(round.verdict_deadline_sec);
+    await refundExpired(id);
+    back += BigInt(round.total);
+  }
+  assert.equal(transferRounds.length, 2);
+  assert.equal((await balanceOf(token, dao)) - daoToken, back, "both 100-recipient rounds are back, exactly");
+  for (const id of [nearRound, ...transferRounds]) {
+    const round = (await getRound(id))!;
+    assert.ok(round.payments.every((p) => p.state === "Refunded"), id);
+    assert.equal(round.refunded, round.total);
+  }
+  console.log(
+    `  RETURNED WHOLE after the verdict window: the NEAR round (the DAO's NEAR up by exactly 1 NEAR; a late verdict ` +
+      `refused) and both 100-recipient rounds (${back} of the token)`,
+  );
+});
+
+test("scenario 11: one amount edited after screening makes a new round; the old verdict does not apply", async () => {
+  const payments = parseTrezuCsv(readFileSync(join(FIXTURES, "round-16.csv"), "utf8"), DECIMALS);
+  const edited = payments.map((p) => (p.recipient === "r09.test.near" ? { ...p, amount: String(BigInt(p.amount) + 1n) } : p));
+  const id = await createRound(token.accountId, edited, sandboxVector.timestamp + 2);
+  assert.notEqual(id, farmsRound, "same list and timestamp but one amount: another id");
+  const round = (await getRound(id))!;
+  assert.equal(round.verdict, null);
+  assert.ok(
+    round.payments.every((p) => p.state === "Pending"),
+    "no hold carries over, not even r09's",
+  );
+  await expectReject(
+    () => alice.call(headcount, "payout_batch", { round_id: id, limit: 100 }, { gas: tgas(100) }),
+    "has no verdict yet: nothing is paid before the screen",
+  );
+  assert.ok((await getRound(farmsRound))!.verdict, "the screened round keeps its verdict");
+  console.log(
+    `  NEW ROUND ${id.slice(0, 12)}...: r09's amount +1 unit gives another id; it has no verdict, and paying it is refused`,
+  );
+});
+
+test("scenario 13: over every round Headcount lists, paid + refunded = funded, and Headcount keeps none of the money", async () => {
+  const rounds = await headcount.view<RoundView[]>("get_rounds", { dao_id: dao.accountId, from_index: 0, limit: 100 });
+  assert.equal(rounds.length, 6, "round16, the NEAR round, two 100-recipient rounds, the farms round, the edited one");
+  let settled = 0;
+  for (const round of rounds) {
+    if (round.funded_at_sec) {
+      assert.ok(isSettled(round), `${round.round_id}: every payment paid or back with the DAO`);
+      assert.equal(BigInt(round.paid) + BigInt(round.refunded), BigInt(round.total), `${round.round_id}: paid + refunded = funded`);
+      settled += 1;
+    } else {
+      assert.deepEqual([round.paid, round.refunded], ["0", "0"], `${round.round_id} was never funded`);
+    }
+  }
+  assert.equal(settled, 5);
+  assert.equal(await tokenBalance(token, headcount.accountId), 0n, "Headcount holds none of the token");
+  assert.equal(await tokenBalance(otherToken, headcount.accountId), 0n, "nor of the other token");
+  const gained = (await freeNear(headcount)) - headcountFreeAtStart;
+  assert.ok(
+    gained >= 0n && gained < BigInt(parseNEAR("0.05")),
+    `beyond its storage, Headcount's NEAR moved by ${gained} yoctoNEAR since it was deployed: gas rewards only`,
+  );
+  console.log(
+    `  BOOKS BALANCE over all ${rounds.length} rounds get_rounds lists: the 5 funded are settled with paid + refunded = ` +
+      `funded, and the edited one was never funded. Headcount holds 0 of each token, and its NEAR beyond storage ` +
+      `is up ${(Number(gained) / 1e24).toFixed(5)} NEAR since deployment: its gas rewards`,
+  );
 });
