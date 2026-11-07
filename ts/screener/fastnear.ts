@@ -21,7 +21,7 @@
 
 import { buildIndex, factsFromTx, type Fact, type RpcReceipt, type TxStatus } from "./block-scan.ts";
 import { type PacedFetch } from "./paced-fetch.ts";
-import { RpcError, jsonRpc, type Rpc } from "./rpc.ts";
+import { RpcError, jsonRpc, retryingRpc, type Rpc } from "./rpc.ts";
 import { NEAR_ASSET, isImplicit, type ChainReader, type Creation, type Transfer } from "./types.ts";
 
 export const FASTNEAR = {
@@ -104,23 +104,6 @@ const ROLE_FILTERS: Readonly<Record<Role, readonly Record<string, boolean>[]>> =
   sent: [{ is_predecessor: true }],
   received: [{ is_receiver: true }, { is_event_log: true }],
 };
-
-const RETRY_CAUSES = new Set(["TIMEOUT_ERROR", "INTERNAL_ERROR", "UNAVAILABLE_SHARD", "NO_SYNCED_BLOCKS"]);
-
-/** `rpc` that retries errors a healthy node later answers (timeouts, a shard catching up). */
-const retryingRpc = (rpc: Rpc, sleep: (ms: number) => Promise<void>, attempts = 4): Rpc => ({
-  url: rpc.url,
-  async call<T>(method: string, params: unknown): Promise<T> {
-    for (let n = 1; ; n += 1) {
-      try {
-        return await rpc.call<T>(method, params);
-      } catch (error) {
-        if (!(error instanceof RpcError && RETRY_CAUSES.has(error.causeName)) || n >= attempts) throw error;
-        await sleep(1000 * 2 ** (n - 1));
-      }
-    }
-  },
-});
 
 const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 

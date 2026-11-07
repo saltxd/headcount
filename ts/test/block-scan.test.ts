@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import nearApi from "near-api-js";
 
 import { buildIndex, factsFromTx, impliedKey, scanChain, type Fact, type RpcAction, type TxStatus } from "../screener/block-scan.ts";
-import type { Rpc } from "../screener/rpc.ts";
+import { jsonRpc, type Rpc, type Transport } from "../screener/rpc.ts";
 import { NEAR_ASSET } from "../screener/types.ts";
 
 const REGISTRARS = new Set(["near"]);
@@ -240,4 +240,134 @@ test("the scan refuses a node that no longer keeps every block: a creation it ne
     },
   };
   await assert.rejects(scanChain(pruned, { registrars: [] }), /keeps blocks only from height 100/);
+});
+
+// --- the scan over a pretend node: heights NEAR skipped, and a block the node lost -----------------
+
+interface PretendBlock {
+  readonly height: number;
+  /** The height of the block before it, whose hash is `hash-<parent>`; none for genesis. */
+  readonly parent?: number;
+  /** Transactions in this block's one chunk. */
+  readonly txs?: readonly TxStatus[];
+}
+
+/**
+ * A node over `blocks`, the last of which is the final head, answering as neard 2.13.4 does: a
+ * height with no block below the head is UNKNOWN_BLOCK with HTTP 422. Each method in `timeouts`
+ * times out once (HTTP 408, TIMEOUT_ERROR), as a loaded node's calls do.
+ */
+const pretendNode = (blocks: readonly PretendBlock[], timeouts: readonly string[] = []): { transport: Transport; calls: string[] } => {
+  const byHeight = new Map(blocks.map((b) => [b.height, b]));
+  const head = blocks.at(-1)!;
+  const txs = new Map(blocks.flatMap((b) => (b.txs ?? []).map((t) => [t.transaction.hash, t] as const)));
+  const pending = new Set(timeouts);
+  const calls: string[] = [];
+  const view = (b: PretendBlock) => ({
+    header: {
+      height: b.height,
+      hash: `hash-${b.height}`,
+      prev_hash: b.parent === undefined ? "11111111111111111111111111111111" : `hash-${b.parent}`,
+      prev_height: b.parent ?? 0,
+    },
+    chunks: [{ chunk_hash: `chunk-${b.height}`, height_included: b.height }],
+  });
+  const transport: Transport = async (_url, init) => {
+    const { id, method, params } = JSON.parse(String(init.body)) as { id: number; method: string; params: Record<string, unknown> };
+    calls.push(method);
+    const ok = (result: unknown): Response => new Response(JSON.stringify({ jsonrpc: "2.0", id, result }), { status: 200 });
+    const failure = (status: number, cause: string, data: string): Response =>
+      new Response(
+        JSON.stringify({ jsonrpc: "2.0", id, error: { name: "HANDLER_ERROR", cause: { info: {}, name: cause }, code: -32000, message: "Server error", data } }),
+        { status },
+      );
+    if (pending.delete(method)) return failure(408, "TIMEOUT_ERROR", "Timeout");
+    switch (method) {
+      case "status":
+        return ok({ sync_info: { earliest_block_height: 0 } });
+      case "EXPERIMENTAL_genesis_config":
+        return ok({ genesis_height: 0 });
+      case "block": {
+        const height = params["finality"] === "final" ? head.height : Number(params["block_id"]);
+        const block = byHeight.get(height);
+        return block ? ok(view(block)) : failure(422, "UNKNOWN_BLOCK", `DB Not Found Error: BLOCK HEIGHT: ${height} \n Cause: Unknown`);
+      }
+      case "chunk": {
+        const block = byHeight.get(Number(String(params["chunk_id"]).replace("chunk-", "")));
+        return ok({ transactions: (block?.txs ?? []).map((t) => ({ hash: t.transaction.hash, signer_id: t.transaction.signer_id })) });
+      }
+      case "EXPERIMENTAL_tx_status":
+        return ok(txs.get(String(params["tx_hash"])));
+      default:
+        throw new Error(`the scan should not call ${method}`);
+    }
+  };
+  return { transport, calls };
+};
+
+/** farm.example creates x.farm.example in the block at height 4. */
+const CREATED_AT_4 = txStatus("tx-create", [
+  { id: "r1", predecessor: "farm.example", receiver: "x.farm.example", actions: ["CreateAccount", pay(1000n), fullKey("ed25519:A")], block: "hash-4" },
+]);
+const noWait = async (): Promise<void> => undefined;
+
+test("the scan passes over a height NEAR skipped, which the next block's link to the one before proves, and reads every block there is", async () => {
+  // Height 3 has no block: block 4 names block 2 as the one before it. A busy sandbox skips heights.
+  const { transport } = pretendNode([
+    { height: 0 },
+    { height: 1, parent: 0 },
+    { height: 2, parent: 1 },
+    { height: 4, parent: 2, txs: [CREATED_AT_4] },
+    { height: 5, parent: 4 },
+  ]);
+  const reader = await scanChain(jsonRpc("http://node.test", transport), { registrars: [], sleep: noWait });
+  assert.deepEqual(reader.stats, { fromHeight: 0, toHeight: 5, blocks: 5, skippedHeights: 1, chunks: 5, transactions: 1 });
+  assert.deepEqual(await reader.creation("x.farm.example"), {
+    creator: "farm.example",
+    how: "sub-account",
+    txHash: "tx-create",
+    blockHeight: 4,
+    initialKeys: ["ed25519:A"],
+  });
+});
+
+test("the scan fails loudly when a block names one before it that the node did not return: a missing block, not a skipped height", async () => {
+  // Block 4 says block 3 came before it, yet the node has no block at height 3.
+  const { transport } = pretendNode([
+    { height: 0 },
+    { height: 1, parent: 0 },
+    { height: 2, parent: 1 },
+    { height: 4, parent: 3, txs: [CREATED_AT_4] },
+    { height: 5, parent: 4 },
+  ]);
+  await assert.rejects(
+    scanChain(jsonRpc("http://node.test", transport), { registrars: [], sleep: noWait }),
+    /block 4 follows block hash-3 at height 3, which the node did not return: a missing block, not a skipped height/,
+  );
+});
+
+test("the scan refuses a block that is not on the chain from genesis to the final head", async () => {
+  // Blocks 3 and 4 both name block 2 as the one before them; only 4 leads to the head.
+  const { transport } = pretendNode([
+    { height: 0 },
+    { height: 1, parent: 0 },
+    { height: 2, parent: 1 },
+    { height: 3, parent: 2 },
+    { height: 4, parent: 2 },
+    { height: 5, parent: 4 },
+  ]);
+  await assert.rejects(
+    scanChain(jsonRpc("http://node.test", transport), { registrars: [], sleep: noWait }),
+    /the blocks at heights 3 are not on the chain from genesis to the final head/,
+  );
+});
+
+test("the scan asks again when the node times out on a transaction's status (HTTP 408), as a loaded node does", async () => {
+  const { transport, calls } = pretendNode(
+    [{ height: 0 }, { height: 1, parent: 0 }, { height: 4, parent: 1, txs: [CREATED_AT_4] }],
+    ["EXPERIMENTAL_tx_status"],
+  );
+  const reader = await scanChain(jsonRpc("http://node.test", transport), { registrars: [], sleep: noWait });
+  assert.equal(calls.filter((m) => m === "EXPERIMENTAL_tx_status").length, 2, "asked twice");
+  assert.equal((await reader.creation("x.farm.example"))?.txHash, "tx-create");
 });

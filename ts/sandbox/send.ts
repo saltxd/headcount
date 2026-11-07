@@ -29,27 +29,55 @@ interface Outcome {
   readonly status: Record<string, unknown> | string;
 }
 
-interface FinalTx {
+export interface FinalTx {
   readonly status: Record<string, unknown>;
   readonly receipts_outcome: readonly { readonly outcome: Outcome }[];
 }
 
 const NETWORK = "sandbox";
-/** How long to keep asking for one transaction's final outcome. */
-const WAIT_MS = 60_000;
+/**
+ * How long to keep asking for one transaction's final outcome. Each `tx` query itself waits for
+ * finality until the node gives up (about 10 s), so on a loaded machine one transaction can take
+ * several queries; this is a deadline, not a delay, and costs nothing when the node is quick.
+ */
+const WAIT_MS = 120_000;
+/** The first pause between queries, doubling up to the last. */
+const FIRST_PAUSE_MS = 200;
+const LAST_PAUSE_MS = 2_000;
+
+/**
+ * Answers to `tx` worth asking again, since the transaction was already sent and asking is a read:
+ * the node gave up waiting for finality (TIMEOUT_ERROR, which neard sends with HTTP 408, or a bare
+ * HTTP 408 from anything in between), or it does not know the transaction yet.
+ */
+const STILL_PENDING: ReadonlySet<string> = new Set(["TIMEOUT_ERROR", "HTTP_408", "UNKNOWN_TRANSACTION"]);
 
 const failureOf = (status: Outcome["status"]): unknown =>
   typeof status === "object" && status !== null && "Failure" in status ? status["Failure"] : undefined;
 
-const waitFinal = async (rpc: Rpc, hash: string, signerId: string): Promise<FinalTx> => {
-  const until = Date.now() + WAIT_MS;
-  for (;;) {
+/** How `waitFinal` keeps time; tests pass their own. */
+export interface WaitOptions {
+  readonly waitMs?: number;
+  readonly sleep?: (ms: number) => Promise<void>;
+  readonly now?: () => number;
+}
+
+const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Asks for a sent transaction's final outcome until it comes, pausing a little longer each time the
+ * answer is STILL_PENDING. Any other error fails at once; once `waitMs` has passed, so does the
+ * pending one, as the node sent it.
+ */
+export const waitFinal = async (rpc: Rpc, hash: string, signerId: string, options: WaitOptions = {}): Promise<FinalTx> => {
+  const { waitMs = WAIT_MS, sleep = realSleep, now = Date.now } = options;
+  const until = now() + waitMs;
+  for (let pause = FIRST_PAUSE_MS; ; pause = Math.min(pause * 2, LAST_PAUSE_MS)) {
     try {
       return await rpc.call<FinalTx>("tx", { tx_hash: hash, sender_account_id: signerId, wait_until: "FINAL" });
     } catch (error) {
-      const transient = error instanceof RpcError && (error.causeName === "TIMEOUT_ERROR" || error.causeName === "UNKNOWN_TRANSACTION");
-      if (!transient || Date.now() > until) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      if (!(error instanceof RpcError && STILL_PENDING.has(error.causeName)) || now() > until) throw error;
+      await sleep(pause);
     }
   }
 };

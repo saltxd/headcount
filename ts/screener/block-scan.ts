@@ -9,7 +9,7 @@
  * a different source.
  */
 
-import { RpcError, mapLimit, type Rpc } from "./rpc.ts";
+import { RpcError, mapLimit, retryingRpc, type Rpc } from "./rpc.ts";
 import { NEAR_ASSET, isImplicit, type ChainReader, type Creation, type Transfer } from "./types.ts";
 
 export interface ScanOptions {
@@ -20,12 +20,16 @@ export interface ScanOptions {
   readonly registrars: readonly string[];
   /** Requests in flight at once. */
   readonly concurrency?: number;
+  /** How the scan waits before asking again after a timeout; tests pass their own. */
+  readonly sleep?: (ms: number) => Promise<void>;
 }
 
 export interface ScanStats {
   readonly fromHeight: number;
   readonly toHeight: number;
   readonly blocks: number;
+  /** Heights NEAR produced no block at, each proven skipped by the block after it (see `skippedHeights`). */
+  readonly skippedHeights: number;
   readonly chunks: number;
   readonly transactions: number;
 }
@@ -309,7 +313,13 @@ export const buildIndex = (facts: readonly Fact[]): ChainIndex => {
 };
 
 interface BlockView {
-  readonly header: { readonly height: number; readonly hash: string };
+  readonly header: {
+    readonly height: number;
+    readonly hash: string;
+    /** The block before this one: its hash, and (in every header version since V3) its height. */
+    readonly prev_hash: string;
+    readonly prev_height?: number | null;
+  };
   readonly chunks: readonly { readonly chunk_hash: string; readonly height_included: number }[];
 }
 
@@ -321,13 +331,60 @@ interface AccessKeyList {
   readonly keys: readonly { readonly public_key: string; readonly access_key: { readonly permission: unknown } }[];
 }
 
-/** Scans every block from genesis to the final head and returns a reader over what it found. */
+/**
+ * How many heights from `fromHeight` to `toHeight` have no block, once `blocks` (what the node
+ * returned for those heights) is proven to be the whole chain between them.
+ *
+ * NEAR does not produce a block at every height: when a height's block is not made in time, the
+ * next block is made at a later height and names the last block before the gap as its parent. A
+ * busy machine skips heights in a sandbox too. The node answers UNKNOWN_BLOCK for a skipped height,
+ * the same answer it would give for a block it had lost, so the scan tells them apart by the links:
+ * from the head, each block's parent (by hash) must be a block the scan fetched, down to genesis,
+ * and every fetched block must be on that path. A height with no block is then skipped, never
+ * missing: no block on the chain names it. Anything else throws, naming the block.
+ */
+const skippedHeights = (blocks: readonly BlockView[], fromHeight: number, toHeight: number): number => {
+  const byHash = new Map(blocks.map((b) => [b.header.hash, b]));
+  const head = blocks.find((b) => b.header.height === toHeight);
+  if (!head) throw new Error(`the node returned no block at height ${toHeight}, the final head it reported`);
+  const onChain = new Set<string>();
+  for (let block = head; ; ) {
+    onChain.add(block.header.hash);
+    if (block.header.height === fromHeight) break;
+    const { height, prev_hash: prevHash, prev_height: prevHeight } = block.header;
+    const parent = byHash.get(prevHash);
+    if (!parent) {
+      throw new Error(
+        `block ${height} follows block ${prevHash} at height ${prevHeight ?? "unknown"}, which the node did not return: ` +
+          "a missing block, not a skipped height, so the scan could miss what that block holds",
+      );
+    }
+    if (parent.header.height >= height || (typeof prevHeight === "number" && parent.header.height !== prevHeight)) {
+      throw new Error(`block ${height} names block ${prevHash} as the one before it, but the node returned that block at height ${parent.header.height}`);
+    }
+    block = parent;
+  }
+  const strays = blocks.filter((b) => !onChain.has(b.header.hash)).map((b) => b.header.height);
+  if (strays.length > 0) {
+    throw new Error(`the blocks at heights ${strays.join(", ")} are not on the chain from genesis to the final head`);
+  }
+  return toHeight - fromHeight + 1 - blocks.length;
+};
+
+const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Scans every block from genesis to the final head and returns a reader over what it found. Every
+ * call is a read, so one the node answers with a timeout is asked again (`retryingRpc`): a loaded
+ * node gives up on a transaction's status before a healthy one would.
+ */
 export const scanChain = async (rpc: Rpc, options: ScanOptions): Promise<BlockScanReader> => {
   const concurrency = options.concurrency ?? 8;
   const registrars = new Set(options.registrars);
+  const node = retryingRpc(rpc, options.sleep ?? realSleep);
   const [status, genesis] = await Promise.all([
-    rpc.call<{ sync_info: { earliest_block_height: number } }>("status", []),
-    rpc.call<{ genesis_height: number }>("EXPERIMENTAL_genesis_config", {}),
+    node.call<{ sync_info: { earliest_block_height: number } }>("status", []),
+    node.call<{ genesis_height: number }>("EXPERIMENTAL_genesis_config", {}),
   ]);
   const fromHeight = genesis.genesis_height;
   if (status.sync_info.earliest_block_height > fromHeight) {
@@ -336,34 +393,43 @@ export const scanChain = async (rpc: Rpc, options: ScanOptions): Promise<BlockSc
         `from genesis (${fromHeight}), or an account creation it never saw could hide a link`,
     );
   }
-  const head = await rpc.call<BlockView>("block", { finality: "final" });
+  const head = await node.call<BlockView>("block", { finality: "final" });
   const toHeight = head.header.height;
 
   const heights = Array.from({ length: toHeight - fromHeight + 1 }, (_, i) => fromHeight + i);
   const blocks = (
     await mapLimit(heights, concurrency, async (height) => {
       try {
-        return await rpc.call<BlockView>("block", { block_id: height });
+        return await node.call<BlockView>("block", { block_id: height });
       } catch (error) {
-        if (error instanceof RpcError && error.causeName === "UNKNOWN_BLOCK") return null; // no block at this height
+        // No block at this height: skipped, which `skippedHeights` must prove, or lost, which it refuses.
+        if (error instanceof RpcError && error.causeName === "UNKNOWN_BLOCK") return null;
         throw error;
       }
     })
   ).filter((block): block is BlockView => block !== null);
+  const skipped = skippedHeights(blocks, fromHeight, toHeight);
   const heightOf = new Map(blocks.map((b) => [b.header.hash, b.header.height]));
   // A block repeats the last chunk of a shard that produced none; only chunks new at this height count.
   const chunkHashes = blocks.flatMap((b) => b.chunks.filter((c) => c.height_included === b.header.height).map((c) => c.chunk_hash));
-  const chunks = await mapLimit(chunkHashes, concurrency, (hash) => rpc.call<ChunkView>("chunk", { chunk_id: hash }));
+  const chunks = await mapLimit(chunkHashes, concurrency, (hash) => node.call<ChunkView>("chunk", { chunk_id: hash }));
   const transactions = chunks.flatMap((c) => c.transactions);
   const statuses = await mapLimit(transactions, concurrency, (t) =>
-    rpc.call<TxStatus>("EXPERIMENTAL_tx_status", { tx_hash: t.hash, sender_account_id: t.signer_id, wait_until: "NONE" }),
+    node.call<TxStatus>("EXPERIMENTAL_tx_status", { tx_hash: t.hash, sender_account_id: t.signer_id, wait_until: "NONE" }),
   );
   const index = buildIndex(statuses.flatMap((s) => factsFromTx(s, (hash) => heightOf.get(hash), registrars)));
 
-  const stats: ScanStats = { fromHeight, toHeight, blocks: blocks.length, chunks: chunkHashes.length, transactions: transactions.length };
+  const stats: ScanStats = {
+    fromHeight,
+    toHeight,
+    blocks: blocks.length,
+    skippedHeights: skipped,
+    chunks: chunkHashes.length,
+    transactions: transactions.length,
+  };
   const exists = async (account: string): Promise<boolean> => {
     try {
-      await rpc.call("query", { request_type: "view_account", block_id: toHeight, account_id: account });
+      await node.call("query", { request_type: "view_account", block_id: toHeight, account_id: account });
       return true;
     } catch (error) {
       if (error instanceof RpcError && error.causeName === "UNKNOWN_ACCOUNT") return false;
@@ -377,7 +443,7 @@ export const scanChain = async (rpc: Rpc, options: ScanOptions): Promise<BlockSc
     creation: async (account) => index.creations.get(account) ?? null,
     fullAccessKeys: async (account) => {
       if (!(await exists(account))) return null;
-      const list = await rpc.call<AccessKeyList>("query", { request_type: "view_access_key_list", block_id: toHeight, account_id: account });
+      const list = await node.call<AccessKeyList>("query", { request_type: "view_access_key_list", block_id: toHeight, account_id: account });
       return list.keys
         .filter((k) => k.access_key.permission === "FullAccess")
         .map((k) => k.public_key)
