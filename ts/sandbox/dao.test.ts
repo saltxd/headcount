@@ -4,9 +4,10 @@
  *
  *     npm test
  *
- * The DAO is Sputnik DAO v3.2, the version the `sputnik-dao.near` factory deploys today, built from
- * source at near-daos/sputnik-dao-contract 2b0f34a3 (scripts/build-sputnik.mjs). The token is the
- * NEP-141 test token from the same commit.
+ * The DAO is Sputnik DAO v3.2, the exact bytes the `sputnik-dao.near` factory deploys today
+ * (scripts/fetch-sputnik.mjs; the first test checks the code hash). The token is the NEP-141 test
+ * token from the commit the factory names for v3.2, near-daos/sputnik-dao-contract 2b0f34a3
+ * (crates/test-token).
  *
  * Headcount rests on one Sputnik feature: the FunctionCall proposal. A council votes once and the
  * DAO itself makes the call, so a Headcount round can only ever hold what a vote sent it. These
@@ -57,7 +58,7 @@ let alice: NearAccount;
 before(async () => {
   for (const wasm of [SPUTNIK_WASM, TOKEN_WASM]) {
     if (!existsSync(wasm)) {
-      throw new Error(`${wasm} is missing. Build Sputnik DAO v3.2 from source first: npm run build:sputnik`);
+      throw new Error(`${wasm} is missing. Run npm test, whose pretest builds it (or npm run build).`);
     }
   }
   quietSandboxLogs();

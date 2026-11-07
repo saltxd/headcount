@@ -1,0 +1,156 @@
+//! The NEP-141 test token from Sputnik DAO v3.2: near-daos/sputnik-dao-contract at commit
+//! 2b0f34a3860460f285307ec2ccf36345acbe05a2, `test-token/src/lib.rs`, copied unmodified below this
+//! header. MIT licensed, Copyright (c) 2021 near-daos; the license is in this crate's LICENSE file.
+//!
+//! It stands in for USDC in the sandbox: the round token Headcount is funded and pays out in. It is
+//! built in this workspace, next to Headcount, with the same toolchain, near-sdk and release profile
+//! Sputnik v3.2 uses, so one cargo build compiles near-sdk once for both.
+
+use near_contract_standards::fungible_token::metadata::{
+    FungibleTokenMetadata, FungibleTokenMetadataProvider,
+};
+
+use near_contract_standards::fungible_token::{
+    FungibleToken, FungibleTokenCore, FungibleTokenResolver,
+};
+use near_contract_standards::storage_management::{
+    StorageBalance, StorageBalanceBounds, StorageManagement,
+};
+use near_sdk::json_types::U128;
+use near_sdk::{near, AccountId, NearToken, PanicOnDefault, PromiseOrValue};
+
+#[near(contract_state)]
+#[derive(PanicOnDefault)]
+pub struct Contract {
+    token: FungibleToken,
+}
+
+#[near]
+impl Contract {
+    #[init]
+    pub fn new() -> Self {
+        Self {
+            token: FungibleToken::new(b"t".to_vec()),
+        }
+    }
+
+    pub fn mint(&mut self, account_id: AccountId, amount: U128) {
+        self.token.internal_register_account(&account_id);
+        self.token.internal_deposit(&account_id, amount.into());
+    }
+
+    pub fn burn(&mut self, account_id: AccountId, amount: U128) {
+        self.token.internal_withdraw(&account_id, amount.into());
+    }
+}
+
+#[near]
+impl FungibleTokenCore for Contract {
+    #[payable]
+    fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>) {
+        self.token.ft_transfer(receiver_id, amount, memo);
+    }
+
+    #[payable]
+    fn ft_transfer_call(
+        &mut self,
+        receiver_id: AccountId,
+        amount: U128,
+        memo: Option<String>,
+        msg: String,
+    ) -> PromiseOrValue<U128> {
+        self.token.ft_transfer_call(receiver_id, amount, memo, msg)
+    }
+
+    fn ft_total_supply(&self) -> U128 {
+        self.token.ft_total_supply()
+    }
+
+    fn ft_balance_of(&self, account_id: AccountId) -> U128 {
+        self.token.ft_balance_of(account_id)
+    }
+}
+
+#[near]
+impl FungibleTokenResolver for Contract {
+    fn ft_resolve_transfer(
+        &mut self,
+        sender_id: AccountId,
+        receiver_id: AccountId,
+        amount: U128,
+    ) -> U128 {
+        self.token
+            .ft_resolve_transfer(sender_id, receiver_id, amount)
+    }
+}
+
+#[near]
+impl StorageManagement for Contract {
+    #[payable]
+    fn storage_deposit(
+        &mut self,
+        account_id: Option<AccountId>,
+        registration_only: Option<bool>,
+    ) -> StorageBalance {
+        self.token.storage_deposit(account_id, registration_only)
+    }
+
+    fn storage_withdraw(&mut self, amount: Option<NearToken>) -> StorageBalance {
+        self.token.storage_withdraw(amount)
+    }
+
+    fn storage_unregister(&mut self, force: Option<bool>) -> bool {
+        self.token.storage_unregister(force)
+    }
+
+    fn storage_balance_bounds(&self) -> StorageBalanceBounds {
+        self.token.storage_balance_bounds()
+    }
+
+    fn storage_balance_of(&self, account_id: AccountId) -> Option<StorageBalance> {
+        self.token.storage_balance_of(account_id)
+    }
+}
+
+#[near]
+impl FungibleTokenMetadataProvider for Contract {
+    fn ft_metadata(&self) -> FungibleTokenMetadata {
+        unimplemented!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use near_sdk::{
+        env,
+        test_utils::{accounts, VMContextBuilder},
+        testing_env, NearToken,
+    };
+
+    #[test]
+    fn test_basics() {
+        let mut context = VMContextBuilder::new();
+        testing_env!(context.build());
+        let mut contract = Contract::new();
+        testing_env!(context
+            .attached_deposit(env::storage_byte_cost().saturating_mul(125))
+            .build());
+        contract.mint(accounts(0), 1_000_000.into());
+        assert_eq!(contract.ft_balance_of(accounts(0)), 1_000_000.into());
+
+        testing_env!(context
+            .attached_deposit(env::storage_byte_cost().saturating_mul(125))
+            .build());
+        contract.storage_deposit(Some(accounts(1)), None);
+        testing_env!(context
+            .attached_deposit(NearToken::from_yoctonear(1))
+            .predecessor_account_id(accounts(0))
+            .build());
+        contract.ft_transfer(accounts(1), 1_000.into(), None);
+        assert_eq!(contract.ft_balance_of(accounts(1)), 1_000.into());
+
+        contract.burn(accounts(1), 500.into());
+        assert_eq!(contract.ft_balance_of(accounts(1)), 500.into());
+    }
+}

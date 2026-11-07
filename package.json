@@ -9,9 +9,9 @@
     "node": ">=22.18.0"
   },
   "scripts": {
-    "build:sputnik": "node scripts/build-sputnik.mjs",
-    "build:contract": "node scripts/build-contract.mjs",
-    "build": "npm run build:sputnik && npm run build:contract && node scripts/ensure-sandbox.mjs",
+    "fetch:sputnik": "node scripts/fetch-sputnik.mjs",
+    "build:contracts": "node scripts/build-contracts.mjs",
+    "build": "npm run fetch:sputnik && npm run build:contracts && node scripts/ensure-sandbox.mjs",
     "pretest": "npm run build",
     "test": "node --test ts/test/*.test.ts ts/sandbox/*.test.ts",
     "predemo": "npm run build",

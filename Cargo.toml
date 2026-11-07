@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["crates/headcount"]
+members = ["crates/headcount", "crates/test-token"]
+# `cargo test` and a bare `cargo build` mean Headcount alone. The test token (Sputnik's, for the
+# sandbox) is built only by name, by scripts/build-contracts.mjs, so its near-sdk features (legacy,
+# wee_alloc) never reach Headcount's build or its unit tests.
+default-members = ["crates/headcount"]
 
 [workspace.package]
 version = "0.1.0"

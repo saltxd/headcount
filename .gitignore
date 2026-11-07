@@ -1,5 +1,5 @@
 # --- Rust ---
-# target/ also holds the Sputnik DAO source checkout (target/sputnik/), fetched at build time.
+# target/ also caches the Sputnik DAO v3.2 bytes the factory serves (target/sputnik/), fetched at build time.
 target/
 **/*.rs.bk
 *.pdb

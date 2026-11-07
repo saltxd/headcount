@@ -857,6 +857,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "near-contract-standards"
+version = "5.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d59d3d4fd5d6cb11907c69b57f1c15e30acd48d775be5b5c4ccc79ffd6a35ab5"
+dependencies = [
+ "near-sdk",
+]
+
+[[package]]
 name = "near-crypto"
 version = "0.34.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1744,6 +1753,14 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
+]
+
+[[package]]
+name = "test-token"
+version = "0.1.0"
+dependencies = [
+ "near-contract-standards",
+ "near-sdk",
 ]
 
 [[package]]

@@ -1,0 +1,18 @@
+[package]
+name = "test-token"
+description = "Sputnik DAO v3.2's NEP-141 test token (near-daos/sputnik-dao-contract 2b0f34a3), the sandbox's round token"
+version.workspace = true
+edition.workspace = true
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+# A contract for the sandbox only: cargo test has nothing to run in it.
+test = false
+doctest = false
+
+[dependencies]
+near-sdk.workspace = true
+# The version Sputnik v3.2's Cargo.lock pins, matching near-sdk.
+near-contract-standards = "=5.24.1"
