@@ -1,0 +1,25 @@
+{
+ "account_txs": [
+  {
+   "account_id": "devdao.sputnik-dao.near",
+   "transaction_hash": "7Zb4J1xXzHTUuHXMGre2NRKUr9Nw5Yqk9SMbBKsoteTm",
+   "tx_block_height": 91988539,
+   "tx_block_timestamp": "1684238625229213511",
+   "tx_index": 1,
+   "is_signer": false,
+   "is_delegated_signer": false,
+   "is_real_signer": false,
+   "is_any_signer": false,
+   "is_predecessor": false,
+   "is_explicit_refund_to": false,
+   "is_receiver": true,
+   "is_real_receiver": true,
+   "is_function_call": true,
+   "is_action_arg": true,
+   "is_event_log": false,
+   "is_success": true
+  }
+ ],
+ "resume_token": null,
+ "txs_count": 107
+}

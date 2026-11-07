@@ -192,7 +192,7 @@ export const screenRound = async (round: RoundToScreen, reader: ChainReader, con
       else if ((await reader.senderCount(id, threshold + 1, material)) > threshold) {
         why = `received funds from more than ${threshold} accounts`;
       }
-      measured.set(id, why);
+      measured.set(id, why === null ? null : (reader.tooBusy?.(id) ?? why));
     }
     return meet(id, measured.get(id) ?? null);
   };
