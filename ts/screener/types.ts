@@ -79,6 +79,12 @@ export interface ChainReader {
   transfersFrom(account: string): Promise<readonly Transfer[]>;
   /** How many accounts `account` created, counted up to `cap`. */
   createdCount(account: string, cap: number): Promise<number>;
+  /**
+   * Optional. When a reader treated `account` as a service because its history was too long to
+   * read (not because it counted past the threshold), the reason in plain words; the report then
+   * says that instead of a count it never made.
+   */
+  tooBusy?(account: string): string | null;
   /** How many accounts hold or have held `publicKey` with full access (at creation or since), up to `cap`. */
   keyHolderCount(publicKey: string, cap: number): Promise<number>;
   /** How many distinct accounts sent `account` a transfer that `counts` accepts, up to `cap`. */

@@ -216,6 +216,37 @@ Set `NEAR_PRINT_LOGS=1` to see every receipt log and refusal the sandbox prints.
   near-sdk's `global-contracts` feature). `scripts/ensure-sandbox.mjs` fetches 2.13.4 from NEAR's
   release bucket and checks the tarball's SHA-256 before using it.
 
+### Mainnet, read-only (optional)
+
+The judge's run never touches mainnet. For a treasurer who wants to try the screen on a real list,
+the same screen can read mainnet through FastNEAR's keyless public endpoints. It sends no
+transaction and holds no key.
+
+```
+npm run screen -- --trezu-list <64-hex list id>     recipients of a Trezu bulk-payment list (bulkpayment.near view_list)
+npm run screen -- --accounts a.near,b.near          or an explicit list (--accounts-file for one id per line)
+npm run screen -- --factory-daos 1000:12            or 12 public DAOs the Sputnik factory made
+npm run screen:live                                 the by-hand check: 6 public DAOs that hold the factory's key; nothing may link
+npm run board -- out/screens/<folder>               a local board.html over finished screens
+```
+
+Each run writes `report.md`, `report.json`, `verdict.json`, a `run.json` and a `board.html` (one
+static page, no network) into `out/`. The pacing is enforced in code: one request at a time, at
+least 500 ms apart (2 a second at most), doubling backoff on 429 and 5xx (a 429 also slows the rest of
+the run), and only `free.rpc.fastnear.com`, `tx.main.fastnear.com` and `api.fastnear.com`.
+
+The mainnet reader asks per account instead of scanning every block, so it reads a bounded slice
+(the newest 400 transactions of each role per account) and says where it stopped in `run.json`, the
+board and the terminal. Every shortcut errs toward treating an account as a service, which links fewer
+recipients, never more: an account too busy to read within that slice counts as a service, and an
+implicit account that received NEAR counts as created. `report.json` stays a pure function of what the
+chain said; read limits live beside it in `run.json`. The key index lists current holders only, where
+the sandbox reader also counts past ones.
+
+`npm test` needs no network: the reader runs against a pretend FastNEAR (`ts/test/fastnear-world.ts`)
+and one response recorded from the real service (`fixtures/fastnear/`, DAO accounts only, call
+arguments removed).
+
 ---
 
 ## Disclosures
@@ -281,6 +312,10 @@ scripts/wasm.mjs                 the wasm lowering and code hash both build scri
 scripts/ensure-sandbox.mjs       put neard 2.13.4 where near-workspaces looks (tarball SHA-256 checked)
 ts/src/list-id.ts                Trezu's list id and CSV parser in TypeScript
 ts/test/list-id.test.ts          their tests
+ts/screener/                     the screener: rule, report, the sandbox block scan, and mainnet mode
+                                 (fastnear.ts reader, paced-fetch.ts pacing, trezu-list.ts, cli.ts, board.ts)
+ts/test/fastnear*.test.ts        the mainnet reader on a pretend FastNEAR; mainnet-screen.test.ts runs the screen on it
+fixtures/fastnear/               one recorded FastNEAR response (a DAO's creation), call arguments removed
 ts/sandbox/dao.test.ts           the DAO alone in the sandbox
 ts/sandbox/headcount.test.ts     Headcount next to the DAO: the design's scenarios
 ts/sandbox/harness.ts            Trezu's policy, proposal shapes, test helpers
