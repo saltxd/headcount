@@ -394,7 +394,7 @@ export const runDemo = async (say: (line?: string) => void): Promise<DemoResult>
     line(`Funded ${tokens(total)} = paid ${tokens(paid)} (${paidAccounts} recipients) + returned ${tokens(returned)} (${returnedAccounts} recipients).`);
     line("Headcount holds 0 tokens. get_round keeps each payment's state and each group's outcome on chain:");
     line(`  ${final.groups.map((g) => `group ${g.group} ${g.state}`).join(", ")}.`);
-    line("get_account_record counts each account's rounds with this DAO, from those rounds:");
+    line("get_account_record counts each account's record with this DAO, from the rounds the DAO funded:");
     line(`  ${short(farmC[0]!)}: ${records.nia}`);
     line(`  ${short(farmAFirst)} (farm A): ${records.farmA}`);
     line(`  ${id("uma")}: ${records.uma}`);

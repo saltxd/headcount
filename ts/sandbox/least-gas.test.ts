@@ -270,6 +270,7 @@ test("the largest rounds the bounds allow: 100 recipients with 64-character ids 
   assert.ok(payments.every((p) => p.recipient.length === ID_LEN) && TOKEN_ID.length === ID_LEN);
   const verdict = largestVerdict();
   const bytes = JSON.stringify(verdict).length;
+  let onTransferBurnt = NaN;
   assert.ok(bytes > 210_000, `the verdict is at its bounds: ${bytes} bytes of JSON`);
   for (const round of ROUNDS) {
     round.id = await dao.call<string>(
@@ -283,7 +284,18 @@ test("the largest rounds the bounds allow: 100 recipients with 64-character ids 
     if (round.tokenId === "native") {
       await dao.call(headcount, "fund_round", { round_id: round.id }, { attachedDeposit: BigInt(total), gas: tgas(30) });
     } else {
-      await dao.call(token, "ft_transfer_call", { receiver_id: headcount.accountId, amount: total, msg: round.id }, { attachedDeposit: 1n, gas: tgas(100) });
+      const funding = await dao.callRaw(
+        token,
+        "ft_transfer_call",
+        { receiver_id: headcount.accountId, amount: total, msg: round.id },
+        { attachedDeposit: 1n, gas: tgas(100) },
+      );
+      assert.ok(funding.succeeded, `funding failed: ${funding.receiptFailureMessages.join("; ")}`);
+      // ft_on_transfer reads the round, never the verdict. A Sputnik Transfer{msg} decided by a
+      // 30 TGas vote gives it about 4.5 TGas (headcount.test.ts measures that), so even the largest
+      // screened round must fit in that.
+      onTransferBurnt = (await callbackOf(funding, "ft_on_transfer")).burnt;
+      assert.ok(onTransferBurnt < 4.5, `ft_on_transfer burnt ${onTransferBurnt} TGas on the largest screened round`);
     }
     const view = await getRound(round);
     assert.deepEqual([countIn(view, "Held"), countIn(view, "Pending")], [98, 2], `${round.label} round`);
@@ -293,7 +305,8 @@ test("the largest rounds the bounds allow: 100 recipients with 64-character ids 
   console.log(
     `  LARGEST ROUNDS: in NEAR and in a token with a 64-character id, each 100 recipients with 64-character ids, ` +
       `98 held in 49 pairs, and a verdict of ${Math.round(bytes / 1000)} KB (every group at the bounds: 5 signals of ` +
-      "32 characters, 32 pieces of evidence of 128); both funded",
+      `32 characters, 32 pieces of evidence of 128); both funded. ft_on_transfer burnt ${onTransferBurnt.toFixed(2)} TGas ` +
+      "funding the screened token round",
   );
 });
 
