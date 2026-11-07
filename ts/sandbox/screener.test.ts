@@ -22,8 +22,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import nearApi from "near-api-js";
-import { Worker } from "near-workspaces";
-import type { NearAccount } from "near-workspaces";
+import type { NearAccount, Worker } from "near-workspaces";
 
 import { listId, parseTrezuCsv } from "../src/list-id.ts";
 import { scanChain, type BlockScanReader } from "../screener/block-scan.ts";
@@ -32,6 +31,7 @@ import { jsonRpc, type Rpc } from "../screener/rpc.ts";
 import { DEFAULT_MIN_NEAR, DEFAULT_SERVICE_THRESHOLD, screenRound } from "../screener/screen.ts";
 import { NEAR_ASSET, type ScreenConfig } from "../screener/types.ts";
 import { callKind, quietSandboxLogs, tgas, trezuPolicy } from "./harness.ts";
+import { startSandbox } from "./sandbox.ts";
 import { createNamedAccounts, near, planWorld, seedWorld, type NamedSpec, type World } from "./world.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -76,7 +76,7 @@ before(async () => {
     if (!existsSync(wasm)) throw new Error(`${wasm} is missing. Run npm test, whose pretest builds it.`);
   }
   quietSandboxLogs();
-  worker = await Worker.init();
+  worker = await startSandbox();
   root = worker.rootAccount;
   rpc = jsonRpc((worker.provider as unknown as { connection: { url: string } }).connection.url);
   const id = (name: string): string => `${name}.${root.accountId}`;

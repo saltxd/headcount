@@ -24,8 +24,8 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Worker, parseNEAR } from "near-workspaces";
-import type { NearAccount } from "near-workspaces";
+import { parseNEAR } from "near-workspaces";
+import type { NearAccount, Worker } from "near-workspaces";
 
 import {
   expectReject,
@@ -36,6 +36,7 @@ import {
   type FunctionCallKind,
   type ProposalView,
 } from "./harness.ts";
+import { startSandbox } from "./sandbox.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, "..", "..", "out");
@@ -60,7 +61,7 @@ before(async () => {
     }
   }
   quietSandboxLogs();
-  worker = await Worker.init();
+  worker = await startSandbox();
   const root = worker.rootAccount;
 
   treasurer = await root.createSubAccount("treasurer");

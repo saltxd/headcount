@@ -15,8 +15,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Worker, parseNEAR } from "near-workspaces";
-import type { NearAccount } from "near-workspaces";
+import { parseNEAR } from "near-workspaces";
+import type { NearAccount, Worker } from "near-workspaces";
 
 import { listId, parseTrezuCsv, type Payment } from "../src/list-id.ts";
 import {
@@ -32,6 +32,7 @@ import {
   type ProposalKind,
   type ProposalView,
 } from "./harness.ts";
+import { startSandbox } from "./sandbox.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const OUT = join(ROOT, "out");
@@ -146,7 +147,7 @@ before(async () => {
     if (!existsSync(wasm)) throw new Error(`${wasm} is missing. Run npm test, whose pretest builds it.`);
   }
   quietSandboxLogs();
-  worker = await Worker.init();
+  worker = await startSandbox();
   const root = worker.rootAccount;
 
   treasurer = await root.createSubAccount("treasurer");
@@ -666,7 +667,7 @@ const chainNowSec = async (): Promise<number> => {
   return Number(BigInt(block.header.timestamp_nanosec) / 1_000_000_000n);
 };
 
-/** Moves the sandbox clock past `deadlineSec` with empty blocks (about 1.3 s each) instead of waiting. */
+/** Moves the sandbox clock past `deadlineSec` with empty blocks (about 1 s of chain time each) instead of waiting. */
 const passDeadline = async (deadlineSec: number): Promise<void> => {
   for (let i = 0; i < 10 && (await chainNowSec()) <= deadlineSec + 1; i += 1) {
     await worker!.provider.fastForward(Math.max(5, deadlineSec + 2 - (await chainNowSec())));

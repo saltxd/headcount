@@ -12,7 +12,7 @@
     "build:sputnik": "node scripts/build-sputnik.mjs",
     "build:contract": "node scripts/build-contract.mjs",
     "pretest": "npm run build:sputnik && npm run build:contract && node scripts/ensure-sandbox.mjs",
-    "test": "node --test --test-concurrency=1 ts/test/*.test.ts ts/sandbox/*.test.ts",
+    "test": "node --test ts/test/*.test.ts ts/sandbox/*.test.ts",
     "typecheck": "tsc --noEmit",
     "screen": "node ts/screener/cli.ts screen",
     "board": "node ts/screener/cli.ts board",
