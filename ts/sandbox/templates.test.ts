@@ -180,6 +180,7 @@ test('template "Name the screener": the vote Trezu files names the DAO\'s screen
     screener_id: screener.accountId,
     verdict_window_sec: vector.values["verdict_window_sec"],
     hold_window_sec: vector.values["hold_window_sec"],
+    tokens: [token.accountId],
   });
   console.log(`  TEMPLATE "Name the screener" (proposal ${id}, Approved): ${dao.accountId} names ${screener.accountId}, 2-day windows`);
 });

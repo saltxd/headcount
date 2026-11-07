@@ -190,7 +190,8 @@ export const runDemo = async (say: (line?: string) => void): Promise<DemoResult>
     step(2, "The DAO names its screener, by vote");
     line("Why: only an account the DAO itself picked may say which recipients are linked.");
     line(`The Requestor fills Trezu's "Name the screener" template, which files one proposal:`);
-    line(`  ${headcount.accountId} configure: screener ${screener.accountId}, verdict and hold windows ${WINDOW_SEC / 60} minutes`);
+    line(`  ${headcount.accountId} configure: screener ${screener.accountId}, verdict and hold windows ${WINDOW_SEC / 60} minutes,`);
+    line(`  rounds paid in NEAR or ${token.accountId}`);
     const configured = await fileTemplate(
       "headcount-name-screener",
       { dao_id: dao.accountId, screener_id: screener.accountId, verdict_window_sec: WINDOW_SEC, hold_window_sec: WINDOW_SEC },
@@ -199,9 +200,11 @@ export const runDemo = async (say: (line?: string) => void): Promise<DemoResult>
         line("Approver 1 votes yes: the proposal is still in progress, and nothing has changed.");
       },
     );
-    assert.equal((await headcount.view<{ screener_id: string }>("get_config", { dao_id: dao.accountId })).screener_id, screener.accountId);
+    const config = await headcount.view<{ screener_id: string; tokens: string[] }>("get_config", { dao_id: dao.accountId });
+    assert.deepEqual([config.screener_id, config.tokens], [screener.accountId, [token.accountId]]);
     line(`Approver 2 votes yes: proposal ${configured} is approved, and the DAO's call ran in that same transaction.`);
-    line(`From now on, only ${screener.accountId} can post a verdict on this DAO's rounds.`);
+    line(`From now on, only ${screener.accountId} can post a verdict on this DAO's rounds, and nobody can`);
+    line(`create a round of the DAO's in a token it did not list.`);
 
     // --- 3. The world ------------------------------------------------------------------------
     const world = await seedWorld(rpc, plan, { root, daoId: dao.accountId, tokenId: token.accountId });

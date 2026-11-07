@@ -129,7 +129,13 @@ before(async () => {
     const kind = callKind(
       headcount.accountId,
       "configure",
-      { dao_id: dao.accountId, screener_id: screener.accountId, verdict_window_sec: 2 * DAY, hold_window_sec: 2 * DAY },
+      {
+        dao_id: dao.accountId,
+        screener_id: screener.accountId,
+        verdict_window_sec: 2 * DAY,
+        hold_window_sec: 2 * DAY,
+        tokens: [token.accountId],
+      },
       near("0.01"),
       30,
     );

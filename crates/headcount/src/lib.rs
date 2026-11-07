@@ -1,6 +1,7 @@
 //! Headcount: screened reward rounds for Sputnik DAO and Trezu treasuries.
 //!
-//! A DAO names a screener by vote (`configure`). A requestor turns a payment list into a round
+//! A DAO names a screener, and the tokens its rounds may pay in besides NEAR, by vote
+//! (`configure`). A requestor turns a payment list into a round
 //! (`create_round`); the round's id is Trezu's list id for the same list, with the DAO as the
 //! submitter. The DAO funds the round by vote, in NEAR (`fund_round`) or in a NEP-141 token
 //! (`ft_transfer_call`, received by `ft_on_transfer`), and its screener posts which listed
@@ -45,6 +46,9 @@ pub const MIN_WINDOW_SEC: u64 = 60;
 
 /// Longest window a DAO can set: a year (and a day).
 pub const MAX_WINDOW_SEC: u64 = 366 * 86_400;
+
+/// Most tokens a DAO can list for its rounds, besides NEAR.
+pub const MAX_TOKENS: usize = 10;
 
 /// Bounds on what a verdict may carry, so its storage and the gas to check it stay small.
 pub const MAX_RULE_LEN: usize = 64;
@@ -91,6 +95,11 @@ pub struct DaoConfig {
     pub verdict_window_sec: u64,
     /// How long a held group waits for a council vote before it can go back to the DAO.
     pub hold_window_sec: u64,
+    /// The NEP-141 tokens this DAO's rounds may pay in; NEAR is always allowed. Nobody can create a
+    /// round of this DAO's in any other token. A token round is funded when its token reports the
+    /// DAO as the sender, so only a token the DAO itself vouched for may say so: a token contract a
+    /// stranger controls could report any sender.
+    pub tokens: Vec<AccountId>,
 }
 
 /// One line of a payment list, as `create_round` takes it.
@@ -382,12 +391,14 @@ pub struct RoundView {
     pub hold_deadline_sec: Option<u64>,
 }
 
-/// One account's record with one DAO, counted from that DAO's own rounds: what `get_account_record`
-/// returns. A round counts once per field, whatever happened to the account in it.
+/// One account's record with one DAO, counted from the rounds that DAO funded: what
+/// `get_account_record` returns. A round counts once per field, whatever happened to the account in
+/// it. Only the DAO can fund its round (in NEAR, or in a token it listed), so a round anyone else
+/// created under the DAO counts only if the DAO funded it.
 #[near(serializers = [json])]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AccountRecord {
-    /// Rounds whose list names the account.
+    /// Funded rounds whose list names the account.
     pub rounds_listed: u32,
     /// Of those, rounds whose verdict held it in a linked group, whatever the council decided.
     pub rounds_held: u32,
@@ -395,8 +406,8 @@ pub struct AccountRecord {
     pub rounds_paid: u32,
     /// Rounds whose amount for it went back to the DAO instead.
     pub rounds_returned: u32,
-    /// How many of the DAO's rounds this answer read (`limit` of them from `from_index`), and how
-    /// many the DAO has: when `rounds_read` is less, read the next page.
+    /// How many of the DAO's rounds this answer read (`limit` of them from `from_index`), funded or
+    /// not, and how many the DAO has: when `rounds_read` is less, read the next page.
     pub rounds_read: u32,
     pub rounds_total: u32,
 }
@@ -440,9 +451,11 @@ impl Headcount {
         }
     }
 
-    /// Names the screener for `dao_id`'s rounds and sets its windows. Only `dao_id` itself can call
-    /// this, so for a Sputnik DAO it takes a `FunctionCall` proposal and a vote. Payable: attach
-    /// enough for the storage; the rest comes back.
+    /// Names the screener for `dao_id`'s rounds, sets its windows, and lists the NEP-141 tokens its
+    /// rounds may pay in besides NEAR (`tokens`; none if not given, so NEAR only). Each call
+    /// replaces the whole configuration; rounds already created keep their windows and their
+    /// token. Only `dao_id` itself can call this, so for a Sputnik DAO it takes a `FunctionCall`
+    /// proposal and a vote. Payable: attach enough for the storage; the rest comes back.
     ///
     /// The DAO is named explicitly so that a member who calls this from their own account, rather
     /// than through a proposal, is refused instead of silently configuring their own account.
@@ -453,6 +466,7 @@ impl Headcount {
         screener_id: AccountId,
         verdict_window_sec: u64,
         hold_window_sec: u64,
+        tokens: Option<Vec<AccountId>>,
     ) {
         require!(
             env::predecessor_account_id() == dao_id,
@@ -462,20 +476,47 @@ impl Headcount {
         );
         check_window("verdict_window_sec", verdict_window_sec);
         check_window("hold_window_sec", hold_window_sec);
+        let tokens = tokens.unwrap_or_default();
+        require!(
+            tokens.len() <= MAX_TOKENS,
+            format!(
+                "a DAO lists at most {MAX_TOKENS} tokens, not {}",
+                tokens.len()
+            )
+        );
+        for (i, token) in tokens.iter().enumerate() {
+            require!(
+                !tokens[..i].contains(token),
+                format!("{token} is listed twice")
+            );
+        }
 
         let before = env::storage_usage();
+        let listed = if tokens.is_empty() {
+            "NEAR only".to_string()
+        } else {
+            format!(
+                "NEAR and {}",
+                tokens
+                    .iter()
+                    .map(|t| t.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
         self.configs.insert(
             dao_id.clone(),
             DaoConfig {
                 screener_id: screener_id.clone(),
                 verdict_window_sec,
                 hold_window_sec,
+                tokens,
             },
         );
         self.configs.flush();
         settle_storage(before, &dao_id);
         env::log_str(&format!(
-            "configure: {dao_id} names {screener_id} as its screener; verdict window {verdict_window_sec} s, hold window {hold_window_sec} s"
+            "configure: {dao_id} names {screener_id} as its screener; verdict window {verdict_window_sec} s, hold window {hold_window_sec} s; rounds pay in {listed}"
         ));
     }
 
@@ -483,8 +524,9 @@ impl Headcount {
     /// same list with `dao_id` as the submitter. Anyone can create a round; only the DAO can fund it.
     /// Payable: the caller pays the round's storage, and the rest of the deposit comes back.
     ///
-    /// `token_id` is `"native"` for NEAR or a NEP-141 contract; amounts are in its smallest unit.
-    /// `timestamp` is Trezu's list timestamp, so the same list can be paid again as a new round.
+    /// `token_id` is `"native"` for NEAR or a NEP-141 contract the DAO listed with `configure`;
+    /// amounts are in its smallest unit. `timestamp` is Trezu's list timestamp, so the same list can
+    /// be paid again as a new round.
     #[payable]
     pub fn create_round(
         &mut self,
@@ -503,6 +545,12 @@ impl Headcount {
             })
             .clone();
         let (payments, total) = checked_list(&token_id, payments);
+        require!(
+            token_id == NATIVE || config.tokens.iter().any(|t| t.as_str() == token_id),
+            format!(
+                "{dao_id} has not listed {token_id} as a token its rounds pay in: the DAO lists its tokens by vote, with configure"
+            )
+        );
         let round_id = id_of(&dao_id, &token_id, &payments, timestamp);
         require!(
             !self.rounds.contains_key(&round_id),
@@ -587,10 +635,13 @@ impl Headcount {
     }
 
     /// `account_id`'s record with `dao_id`, counted from that DAO's rounds in creation order:
-    /// `limit` of them (100 if not given) from `from_index` (0 if not given). Kept per DAO on
-    /// purpose: any account can configure itself as a DAO and screen its own rounds, so a record
-    /// counts only what the named DAO's own screener and council did. A view: it is computed from the
-    /// rounds as stored, so it costs no storage and no call that pays anyone has to update it.
+    /// `limit` of them (100 if not given) from `from_index` (0 if not given), of which only the
+    /// rounds the DAO funded count. Kept per DAO on purpose: any account can configure itself as a
+    /// DAO and screen its own rounds, so a record counts only what the named DAO funded and what its
+    /// own screener and council did there. Anyone can create a round under a DAO, but only the DAO
+    /// can fund it, in NEAR or in a token it listed, so an unfunded round counts nowhere. A view: it
+    /// is computed from the rounds as stored, so it costs no storage and no call that pays anyone has
+    /// to update it.
     pub fn get_account_record(
         &self,
         dao_id: AccountId,
@@ -614,6 +665,9 @@ impl Headcount {
                 continue;
             };
             record.rounds_read += 1;
+            if round.funded_at_sec == 0 {
+                continue;
+            }
             let Ok(k) = round
                 .payments
                 .binary_search_by(|p| p.recipient.as_str().cmp(account_id.as_str()))

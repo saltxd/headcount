@@ -69,11 +69,18 @@ fn fresh() -> Headcount {
     Headcount::new()
 }
 
-/// A Headcount where `dao.test.near` has named `screener.test.near`, with 2-day windows.
+/// A Headcount where `dao.test.near` has named `screener.test.near`, with 2-day windows, and listed
+/// `token.test.near` as a token its rounds pay in.
 fn configured() -> Headcount {
     let mut h = fresh();
     ctx(DAO, near(10));
-    h.configure(acc(DAO), acc(SCREENER), 2 * DAY, 2 * DAY);
+    h.configure(
+        acc(DAO),
+        acc(SCREENER),
+        2 * DAY,
+        2 * DAY,
+        Some(vec![acc(TOKEN)]),
+    );
     h
 }
 
@@ -106,14 +113,21 @@ fn the_dao_configures_itself() {
     assert_eq!(h.get_config(acc(DAO)), None);
 
     ctx(DAO, near(10));
-    h.configure(acc(DAO), acc(SCREENER), 2 * DAY, 3 * DAY);
+    h.configure(
+        acc(DAO),
+        acc(SCREENER),
+        2 * DAY,
+        3 * DAY,
+        Some(vec![acc(TOKEN)]),
+    );
 
     assert_eq!(
         h.get_config(acc(DAO)),
         Some(DaoConfig {
             screener_id: acc(SCREENER),
             verdict_window_sec: 2 * DAY,
-            hold_window_sec: 3 * DAY
+            hold_window_sec: 3 * DAY,
+            tokens: vec![acc(TOKEN)],
         })
     );
 }
@@ -123,7 +137,7 @@ fn the_dao_configures_itself() {
 fn a_requestor_cannot_configure_the_dao() {
     let mut h = fresh();
     ctx(REQUESTOR, near(10));
-    h.configure(acc(DAO), acc(REQUESTOR), 2 * DAY, 2 * DAY);
+    h.configure(acc(DAO), acc(REQUESTOR), 2 * DAY, 2 * DAY, None);
 }
 
 #[test]
@@ -131,14 +145,14 @@ fn a_requestor_cannot_configure_the_dao() {
 fn a_screener_cannot_reconfigure_the_dao() {
     let mut h = configured();
     ctx(SCREENER, near(10));
-    h.configure(acc(DAO), acc(SCREENER), 300 * DAY, 300 * DAY);
+    h.configure(acc(DAO), acc(SCREENER), 300 * DAY, 300 * DAY, None);
 }
 
 #[test]
 fn the_dao_can_name_a_new_screener() {
     let mut h = configured();
     ctx(DAO, near(10));
-    h.configure(acc(DAO), acc("screener2.test.near"), DAY, DAY);
+    h.configure(acc(DAO), acc("screener2.test.near"), DAY, DAY, None);
     assert_eq!(
         h.get_config(acc(DAO)).unwrap().screener_id,
         acc("screener2.test.near")
@@ -150,7 +164,7 @@ fn configure_charges_the_dao_its_storage_and_returns_the_rest() {
     let mut h = fresh();
     ctx(DAO, near(10));
     let before = env::storage_usage();
-    h.configure(acc(DAO), acc(SCREENER), DAY, DAY);
+    h.configure(acc(DAO), acc(SCREENER), DAY, DAY, None);
     let cost = env::storage_byte_cost().as_yoctonear() * u128::from(env::storage_usage() - before);
     assert!(cost > 0);
     assert_eq!(
@@ -164,7 +178,7 @@ fn configure_charges_the_dao_its_storage_and_returns_the_rest() {
 fn configure_needs_its_storage_paid() {
     let mut h = fresh();
     ctx(DAO, NearToken::from_yoctonear(1));
-    h.configure(acc(DAO), acc(SCREENER), DAY, DAY);
+    h.configure(acc(DAO), acc(SCREENER), DAY, DAY, None);
 }
 
 #[test]
@@ -172,7 +186,7 @@ fn configure_needs_its_storage_paid() {
 fn a_window_in_milliseconds_is_refused() {
     let mut h = fresh();
     ctx(DAO, near(10));
-    h.configure(acc(DAO), acc(SCREENER), 2 * DAY * 1000, DAY);
+    h.configure(acc(DAO), acc(SCREENER), 2 * DAY * 1000, DAY, None);
 }
 
 #[test]
@@ -180,7 +194,98 @@ fn a_window_in_milliseconds_is_refused() {
 fn a_zero_hold_window_is_refused() {
     let mut h = fresh();
     ctx(DAO, near(10));
-    h.configure(acc(DAO), acc(SCREENER), DAY, 0);
+    h.configure(acc(DAO), acc(SCREENER), DAY, 0, None);
+}
+
+// --- the tokens a DAO's rounds pay in -----------------------------------------------------------
+
+#[test]
+#[should_panic(
+    expected = "dao.test.near has not listed othertoken.test.near as a token its rounds pay in: the DAO lists its tokens by vote, with configure"
+)]
+fn a_round_in_a_token_the_dao_did_not_list_is_refused() {
+    let mut h = configured();
+    create(&mut h, "othertoken.test.near", three());
+}
+
+#[test]
+#[should_panic(expected = "dao.test.near has not listed token.test.near")]
+fn a_dao_that_lists_no_token_pays_its_rounds_in_near_only() {
+    let mut h = fresh();
+    ctx(DAO, near(10));
+    h.configure(acc(DAO), acc(SCREENER), DAY, DAY, None);
+    assert_eq!(
+        h.get_config(acc(DAO)).unwrap().tokens,
+        Vec::<AccountId>::new()
+    );
+    create(&mut h, NATIVE, three());
+    create(&mut h, TOKEN, five());
+}
+
+#[test]
+#[should_panic(expected = "dao.test.near has not listed token.test.near")]
+fn a_later_configure_replaces_the_token_list() {
+    let mut h = configured();
+    let earlier = create(&mut h, TOKEN, five());
+    ctx(DAO, near(10));
+    h.configure(acc(DAO), acc(SCREENER), DAY, DAY, None);
+    assert_eq!(
+        h.get_round(earlier).unwrap().token_id,
+        TOKEN,
+        "a round already created keeps its token"
+    );
+    create(&mut h, TOKEN, three());
+}
+
+#[test]
+#[should_panic(expected = "a DAO lists at most 10 tokens, not 11")]
+fn a_dao_lists_at_most_10_tokens() {
+    let mut h = fresh();
+    ctx(DAO, near(10));
+    let tokens = (0..11)
+        .map(|i| acc(&format!("token{i}.test.near")))
+        .collect();
+    h.configure(acc(DAO), acc(SCREENER), DAY, DAY, Some(tokens));
+}
+
+#[test]
+#[should_panic(expected = "token.test.near is listed twice")]
+fn a_token_listed_twice_is_refused() {
+    let mut h = fresh();
+    ctx(DAO, near(10));
+    h.configure(
+        acc(DAO),
+        acc(SCREENER),
+        DAY,
+        DAY,
+        Some(vec![acc(TOKEN), acc("usdc.test.near"), acc(TOKEN)]),
+    );
+}
+
+#[test]
+fn a_stranger_can_create_a_round_in_a_listed_token_but_only_the_dao_can_fund_it() {
+    // A token the DAO listed reports the real sender, so a stranger's own transfer of the round's
+    // total is sent back, and a NEAR round only the DAO itself can fund. Unfunded, neither round
+    // counts in any record.
+    let mut h = configured();
+    ctx(STRANGER, near(100));
+    let in_token = h.create_round(acc(DAO), TOKEN.to_string(), five(), 7);
+    assert_eq!(
+        ft(&mut h, TOKEN, STRANGER, 150, &in_token),
+        U128(150),
+        "sent back"
+    );
+    ctx(STRANGER, near(100));
+    let in_near = h.create_round(acc(DAO), NATIVE.into(), five(), 8);
+    ctx(STRANGER, yocto(150));
+    let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        h.fund_round(in_near.clone())
+    }));
+    assert!(refused.is_err(), "only the DAO funds its NEAR round");
+    for id in [in_token, in_near] {
+        assert_eq!(h.get_round(id).unwrap().funded_at_sec, None);
+    }
+    assert_eq!(counts(&record(&h, DAO, "alice")), (0, 0, 0, 0));
 }
 
 // --- create_round: the id ----------------------------------------------------------------------
@@ -303,7 +408,7 @@ fn a_later_configure_does_not_move_an_existing_rounds_windows() {
     let mut h = configured();
     let id = create(&mut h, NATIVE, three());
     ctx(DAO, near(10));
-    h.configure(acc(DAO), acc(SCREENER), 60, 60);
+    h.configure(acc(DAO), acc(SCREENER), 60, 60, None);
     let round = h.get_round(id).unwrap();
     assert_eq!(
         (round.verdict_window_sec, round.hold_window_sec),
@@ -749,7 +854,7 @@ fn a_replaced_screener_can_no_longer_post() {
     let mut h = configured();
     let id = create(&mut h, TOKEN, five());
     ctx(DAO, near(10));
-    h.configure(acc(DAO), acc("screener2.test.near"), 2 * DAY, 2 * DAY);
+    h.configure(acc(DAO), acc("screener2.test.near"), 2 * DAY, 2 * DAY, None);
     post(&mut h, &id, verdict(vec![]));
 }
 
@@ -758,7 +863,7 @@ fn the_newly_named_screener_posts_instead() {
     let mut h = configured();
     let id = create(&mut h, TOKEN, five());
     ctx(DAO, near(10));
-    h.configure(acc(DAO), acc("screener2.test.near"), 2 * DAY, 2 * DAY);
+    h.configure(acc(DAO), acc("screener2.test.near"), 2 * DAY, 2 * DAY, None);
     ctx("screener2.test.near", near(100));
     h.post_verdict(id.clone(), verdict(vec![]));
     assert_eq!(
@@ -1773,7 +1878,7 @@ fn get_rounds_lists_a_daos_rounds_in_the_order_they_were_created() {
     ctx(REQUESTOR, near(100));
     let c = h.create_round(acc(DAO), NATIVE.into(), three(), 99);
     ctx("other-dao.test.near", near(10));
-    h.configure(acc("other-dao.test.near"), acc(SCREENER), DAY, DAY);
+    h.configure(acc("other-dao.test.near"), acc(SCREENER), DAY, DAY, None);
     ctx(REQUESTOR, near(100));
     let other = h.create_round(acc("other-dao.test.near"), NATIVE.into(), three(), 1);
 
@@ -1990,13 +2095,6 @@ fn a_record_counts_the_daos_rounds_that_list_hold_pay_or_return_an_account() {
 }
 
 #[test]
-fn a_round_not_yet_screened_or_funded_counts_only_as_listed() {
-    let mut h = configured();
-    create(&mut h, NATIVE, five());
-    assert_eq!(counts(&record(&h, DAO, "alice")), (1, 0, 0, 0));
-}
-
-#[test]
 fn a_held_account_counts_as_held_before_the_council_decides() {
     let (h, _) = screened_and_funded(NATIVE, two_groups());
     assert_eq!(counts(&record(&h, DAO, "dave")), (1, 1, 0, 0));
@@ -2011,11 +2109,21 @@ fn records_are_kept_per_dao_so_another_account_screening_its_own_rounds_changes_
     let before = record(&h, DAO, "carol");
     const SELF_DAO: &str = "self-dao.test.near";
     ctx(SELF_DAO, near(10));
-    h.configure(acc(SELF_DAO), acc(SELF_DAO), 2 * DAY, 2 * DAY);
+    h.configure(
+        acc(SELF_DAO),
+        acc(SELF_DAO),
+        2 * DAY,
+        2 * DAY,
+        Some(vec![acc(TOKEN)]),
+    );
     ctx(SELF_DAO, near(100));
     let own = h.create_round(acc(SELF_DAO), TOKEN.to_string(), five(), 1_794_009_600_000);
     ctx(SELF_DAO, near(100));
-    h.post_verdict(own, verdict(vec![group(&["carol", "dave"], "same-funder")]));
+    h.post_verdict(
+        own.clone(),
+        verdict(vec![group(&["carol", "dave"], "same-funder")]),
+    );
+    assert_eq!(ft(&mut h, TOKEN, SELF_DAO, 150, &own), U128(0));
 
     assert_eq!(
         record(&h, DAO, "carol"),
@@ -2161,4 +2269,60 @@ fn no_call_that_moves_money_reads_the_verdict_so_its_size_never_changes_their_ga
         "the mock counts gas: {small:?}"
     );
     assert_eq!(small, large);
+}
+
+// --- a DAO's record holds only rounds the DAO itself funded (the skeptic's M4) ------------------
+
+/// Someone with no role anywhere, who controls a token contract of their own.
+const STRANGER: &str = "stranger.test.near";
+/// A NEP-141 contract the stranger controls: it reports whatever sender it likes.
+const FAKE_TOKEN: &str = "fake-token.test.near";
+
+#[test]
+fn a_stranger_with_a_token_contract_of_its_own_cannot_put_a_round_in_a_daos_record() {
+    // The skeptic's M4, measured on the old contract: a stranger creates a round "of" the DAO in a
+    // token contract it controls, has that contract report the DAO as the sender of the round's
+    // total, and once the verdict window closes has the round "returned" to the DAO. The DAO's
+    // record then showed listed 1, returned 1 for every recipient, and get_rounds a funded,
+    // settled round the DAO never voted. Whichever step refuses, none of it may show.
+    let mut h = configured();
+    ctx(STRANGER, near(100));
+    let created = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        h.create_round(acc(DAO), FAKE_TOKEN.to_string(), five(), 1)
+    }));
+    if let Ok(id) = created {
+        ctx(FAKE_TOKEN, yocto(0));
+        h.ft_on_transfer(acc(DAO), U128(150), id.clone());
+        if h.get_round(id.clone()).unwrap().funded_at_sec.is_some() {
+            refund_at(&mut h, &id, NOW_SEC + 3 * DAY);
+            ctx_results(results(&[OK]));
+            h.on_refund(id, vec![0, 1, 2, 3, 4]);
+        }
+    }
+    for name in ["alice", "bob", "carol", "dave", "erin"] {
+        assert_eq!(counts(&record(&h, DAO, name)), (0, 0, 0, 0), "{name}");
+    }
+    assert!(
+        h.get_rounds(acc(DAO), 0, 10)
+            .iter()
+            .all(|r| r.funded_at_sec.is_none()),
+        "no round of the DAO's looks funded"
+    );
+}
+
+#[test]
+fn a_round_counts_in_a_record_only_once_its_dao_funds_it() {
+    // Anyone may create a round under a DAO, so an unfunded round says nothing about the DAO.
+    let mut h = configured();
+    ctx(STRANGER, near(100));
+    let id = h.create_round(acc(DAO), NATIVE.into(), five(), 1);
+    assert_eq!(counts(&record(&h, DAO, "alice")), (0, 0, 0, 0));
+    let r = record(&h, DAO, "alice");
+    assert_eq!(
+        (r.rounds_read, r.rounds_total),
+        (1, 1),
+        "the round is read, and not counted"
+    );
+    fund(&mut h, &id);
+    assert_eq!(counts(&record(&h, DAO, "alice")), (1, 0, 0, 0));
 }

@@ -89,6 +89,7 @@ test("the three templates call configure, ft_transfer_call and resolve_group wit
     screener_id: "screener.test.near",
     verdict_window_sec: 172_800,
     hold_window_sec: 172_800,
+    tokens: ["token.test.near"],
   });
 
   const fund = byTemplate("headcount-fund-round-usdc");
@@ -198,5 +199,7 @@ test("retargetManifest points a template at a real deployment, and leaves no san
   assert.equal(fund.binding.receiver_id, "usdc.example.near");
   assert.equal((fund.args as { receiver_id: string }).receiver_id, "headcount.example.near");
   assert.equal(retargetManifest(load("headcount-resolve-group"), to).binding.receiver_id, "headcount.example.near");
+  const named = retargetManifest(load("headcount-name-screener"), to);
+  assert.deepEqual((named.args as { tokens: string[] }).tokens, ["usdc.example.near"], "the DAO lists the real token");
   assert.throws(() => retargetManifest(load("headcount-name-screener"), { headcount: "Not An Account", token: "usdc.example.near" }), /not a NEAR account id/);
 });

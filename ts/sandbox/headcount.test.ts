@@ -55,6 +55,7 @@ interface DaoConfig {
   readonly screener_id: string;
   readonly verdict_window_sec: number;
   readonly hold_window_sec: number;
+  readonly tokens: readonly string[];
 }
 
 interface HeldGroup {
@@ -242,7 +243,13 @@ const configureKind = (windowSec: number = 2 * DAY): FunctionCallKind =>
   callKind(
     headcount.accountId,
     "configure",
-    { dao_id: dao.accountId, screener_id: screener.accountId, verdict_window_sec: windowSec, hold_window_sec: windowSec },
+    {
+      dao_id: dao.accountId,
+      screener_id: screener.accountId,
+      verdict_window_sec: windowSec,
+      hold_window_sec: windowSec,
+      tokens: [token.accountId],
+    },
     BigInt(parseNEAR("0.01")),
     30,
   );
@@ -268,6 +275,7 @@ test("scenario 1: the DAO names its screener through a FunctionCall proposal and
     screener_id: screener.accountId,
     verdict_window_sec: 2 * DAY,
     hold_window_sec: 2 * DAY,
+    tokens: [token.accountId],
   });
   console.log(`  CONFIGURED by vote (proposal ${id}, Approved): ${dao.accountId} names ${screener.accountId}, 2-day windows`);
 });
@@ -285,6 +293,24 @@ test("only the DAO itself can configure it: the Requestor's direct call is refus
   );
   assert.equal((await getConfig())?.screener_id, screener.accountId, "the DAO's screener is unchanged");
   console.log("  REFUSED: the Requestor calling configure for the DAO directly, outside a vote");
+});
+
+test("a round of the DAO's in a token it did not list is refused, so a stranger's own token contract cannot fake the DAO's funding", async () => {
+  // A token contract is any account that calls ft_on_transfer and names a sender: one a stranger
+  // controls can name the DAO. So a round's token must be one the DAO listed by vote; here alice
+  // tries to make her own account the "token" of a round of the DAO's.
+  await expectReject(
+    () =>
+      alice.call(
+        headcount,
+        "create_round",
+        { dao_id: dao.accountId, token_id: alice.accountId, payments: [{ recipient: "r01.test.near", amount: "1" }], timestamp: 1 },
+        { attachedDeposit: BigInt(parseNEAR("0.1")), gas: tgas(100) },
+      ),
+    `${dao.accountId} has not listed ${alice.accountId} as a token its rounds pay in`,
+  );
+  assert.deepEqual(await headcount.view("get_rounds", { dao_id: dao.accountId, from_index: 0, limit: 10 }), [], "no round was created");
+  console.log(`  REFUSED: alice creating a round of the DAO's in her own "token": only ${token.accountId}, which the DAO listed by vote, and NEAR`);
 });
 
 test("scenario 2: the Requestor creates a 16-recipient round from a Trezu-format CSV; its id is Trezu's list id", async () => {
@@ -445,6 +471,7 @@ test("the DAO shortens its windows to 60 s by vote; round16 keeps the 2 days it 
     screener_id: screener.accountId,
     verdict_window_sec: SHORT_WINDOW_SEC,
     hold_window_sec: SHORT_WINDOW_SEC,
+    tokens: [token.accountId],
   });
   const round = await getRound(round16);
   assert.deepEqual([round?.verdict_window_sec, round?.hold_window_sec], [2 * DAY, 2 * DAY], "a round keeps its windows");

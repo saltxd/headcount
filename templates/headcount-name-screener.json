@@ -2,7 +2,7 @@
   "version": 1,
   "id": "headcount-name-screener",
   "title": "Headcount: name the screener",
-  "description": "Names the account that screens this treasury's Headcount reward rounds, and how long a round waits for its verdict and for council votes on held recipients. Headcount accepts this only from the treasury itself, so it takes this vote.",
+  "description": "Names the account that screens this treasury's Headcount reward rounds, how long a round waits for its verdict and for council votes on held recipients, and the token its rounds may pay in besides NEAR: the token this template names. Nobody can create a round of this treasury's in any other token. Headcount accepts this only from the treasury itself, so it takes this vote.",
   "summary": "Name {{screener_id}} as the screener of {{dao_id}}'s Headcount rounds",
   "binding": {
     "receiver_id": "headcount.test.near",
@@ -48,6 +48,7 @@
     "dao_id": "{{dao_id}}",
     "screener_id": "{{screener_id}}",
     "verdict_window_sec": "{{verdict_window_sec}}",
-    "hold_window_sec": "{{hold_window_sec}}"
+    "hold_window_sec": "{{hold_window_sec}}",
+    "tokens": ["token.test.near"]
   }
 }

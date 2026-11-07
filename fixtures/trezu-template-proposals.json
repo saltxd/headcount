@@ -4,7 +4,7 @@
     "repository": "https://github.com/NEAR-DevHub/trezu",
     "commit": "a6aaaf6742099069634a25fb20c4287a2852dd62",
     "commit_date": "2026-11-06",
-    "run": "2026-11-07 UTC, Node v26.13.0, outside this repository; only import specifiers were changed",
+    "run": "2026-11-07 UTC, Node v26.13.0, outside this repository; only import specifiers were changed. The name-screener entries were run again the same day (zod 4.4.3, clsx 2.1.1, date-fns 4.4.0, tailwind-merge 3.6.0, big.js 7.0.1, as Trezu's bun.lock pins them) after its args gained the token list; the other four vectors came out byte-identical",
     "license_note": "Trezu publishes no license, so none of its code is in this repository: only these outputs, computed from our own manifests and values.",
     "manifest_sha256": "SHA-256 of the manifest's JSON with no whitespace (JSON.stringify of the parsed file), so an edited manifest no longer matches its recorded verdict and vectors",
     "sandbox_vectors": "Vectors whose 'what' starts with 'sandbox:' are the ones ts/sandbox/templates.test.ts files on the real Sputnik DAO; their accounts and round id are the sandbox's"
@@ -15,7 +15,7 @@
       "trezu_parse_manifest": "accepted"
     },
     "headcount-name-screener": {
-      "sha256": "531ca339310a5e858d03607cc447827beb595d79f279b34e48228339df15bb67",
+      "sha256": "f4e7352f5e4949c31c6aff2d31db338ddc4ee8f610a4f6b036e6949015b3f20d",
       "trezu_parse_manifest": "accepted"
     },
     "headcount-resolve-group": {
@@ -40,7 +40,7 @@
             "actions": [
               {
                 "method_name": "configure",
-                "args": "eyJkYW9faWQiOiJkYW8udGVzdC5uZWFyIiwic2NyZWVuZXJfaWQiOiJzY3JlZW5lci50ZXN0Lm5lYXIiLCJ2ZXJkaWN0X3dpbmRvd19zZWMiOjE3MjgwMCwiaG9sZF93aW5kb3dfc2VjIjoxNzI4MDB9",
+                "args": "eyJkYW9faWQiOiJkYW8udGVzdC5uZWFyIiwic2NyZWVuZXJfaWQiOiJzY3JlZW5lci50ZXN0Lm5lYXIiLCJ2ZXJkaWN0X3dpbmRvd19zZWMiOjE3MjgwMCwiaG9sZF93aW5kb3dfc2VjIjoxNzI4MDAsInRva2VucyI6WyJ0b2tlbi50ZXN0Lm5lYXIiXX0=",
                 "deposit": "10000000000000000000000",
                 "gas": "30000000000000"
               }
@@ -66,7 +66,7 @@
             "actions": [
               {
                 "method_name": "configure",
-                "args": "eyJkYW9faWQiOiJkYW8udGVzdC5uZWFyIiwic2NyZWVuZXJfaWQiOiJzY3JlZW5lci50ZXN0Lm5lYXIiLCJ2ZXJkaWN0X3dpbmRvd19zZWMiOjYwLCJob2xkX3dpbmRvd19zZWMiOjYwfQ==",
+                "args": "eyJkYW9faWQiOiJkYW8udGVzdC5uZWFyIiwic2NyZWVuZXJfaWQiOiJzY3JlZW5lci50ZXN0Lm5lYXIiLCJ2ZXJkaWN0X3dpbmRvd19zZWMiOjYwLCJob2xkX3dpbmRvd19zZWMiOjYwLCJ0b2tlbnMiOlsidG9rZW4udGVzdC5uZWFyIl19",
                 "deposit": "10000000000000000000000",
                 "gas": "30000000000000"
               }
