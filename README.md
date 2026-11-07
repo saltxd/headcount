@@ -186,9 +186,9 @@ cargo test      # the contract's 122 unit tests
 `npm test` and `npm run demo` first run `npm run build`: fetch the factory's Sputnik DAO v3.2 bytes
 (`npm run fetch:sputnik`), build the Headcount contract and Sputnik's test token
 (`npm run build:contracts`), and put neard 2.13.4 in place. From a fresh clone on an Apple M4 Pro
-(12 cores), `npm ci && npm test` took 62 s on Node 26.13 (2026-11-07, 115 tests), the build
-included (it was 329 s before the sandbox's block time changed); after that, `npm run demo` takes
-about 15 s and `cargo test` about 15 s. The contracts build to the same bytes wherever the clone and
+(12 cores), `npm ci && npm test` took 62 to 68 s over three fresh clones on Node 26.13 and Node
+22.18 (2026-11-07, 115 tests), the build included (it was 329 s before the sandbox's block time
+changed); after that, `npm run demo` takes about 15 s and `cargo test` about 15 s. The contracts build to the same bytes wherever the clone and
 cargo's folders sit: the build remaps them out of the wasm (`scripts/wasm.mjs`), so a clone at
 another path with an empty cargo registry gave Headcount's exact code hash.
 
