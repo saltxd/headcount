@@ -2,8 +2,9 @@
 //!
 //! A DAO names a screener by vote (`configure`). A requestor turns a payment list into a round
 //! (`create_round`); the round's id is Trezu's list id for the same list, with the DAO as the
-//! submitter. Built so far: `configure` and `create_round`, with storage paid by whoever causes it.
-//! Still to come: funding, the screener's verdict, payouts, council resolutions and refunds.
+//! submitter. The DAO funds the round by vote, in NEAR (`fund_round`) or in a NEP-141 token
+//! (`ft_transfer_call`, received by `ft_on_transfer`), and its screener posts which listed
+//! recipients are linked (`post_verdict`). Still to come: payouts, council resolutions and refunds.
 //!
 //! Every byte Headcount stores is paid for by the call that stores it, and any deposit beyond that
 //! cost goes straight back. So the contract's own balance only ever covers its own code and state,
@@ -28,6 +29,14 @@ pub const MIN_WINDOW_SEC: u64 = 60;
 
 /// Longest window a DAO can set: a year (and a day).
 pub const MAX_WINDOW_SEC: u64 = 366 * 86_400;
+
+/// Bounds on what a verdict may carry, so its storage and the gas to check it stay small.
+pub const MAX_RULE_LEN: usize = 64;
+pub const MAX_URL_LEN: usize = 256;
+pub const MAX_SIGNALS: usize = 5;
+pub const MAX_SIGNAL_LEN: usize = 32;
+pub const MAX_EVIDENCE: usize = 32;
+pub const MAX_EVIDENCE_LEN: usize = 128;
 
 /// What a DAO configures, by vote: who screens its rounds, and how long a round waits.
 #[near(serializers = [json, borsh])]
@@ -56,6 +65,43 @@ pub struct PaymentInput {
 pub enum PaymentState {
     /// Not paid yet, and not held.
     Pending,
+    /// In a group the screener linked: waits for a council vote.
+    Held,
+}
+
+/// Recipients the screener found linked, and why. A held group goes to a council vote.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeldGroup {
+    /// Two or more accounts from the round's list.
+    pub accounts: Vec<AccountId>,
+    /// What links them, e.g. "same-funder", "shared-key", "direct-transfer", "shared-collector".
+    pub signals: Vec<String>,
+    /// Where to look: transaction hashes, or "key:ed25519:..." for a shared key.
+    pub evidence: Vec<String>,
+}
+
+/// A screener's verdict on one round. An empty `groups` clears every recipient.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Verdict {
+    /// The block the screen read the chain up to.
+    pub screened_at_block: u64,
+    /// The rule that formed the groups, e.g. "hold-linked-v1".
+    pub rule: String,
+    pub groups: Vec<HeldGroup>,
+    /// SHA-256 of the full evidence report, lowercase hex.
+    pub report_sha256: String,
+    pub report_url: Option<String>,
+}
+
+/// A verdict as posted: who posted it, and when.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PostedVerdict {
+    pub screener_id: AccountId,
+    pub posted_at_sec: u64,
+    pub verdict: Verdict,
 }
 
 /// One payment of a round, as stored.
@@ -88,6 +134,8 @@ struct Round {
     hold_window_sec: u64,
     /// When the DAO funded the round; 0 until then.
     funded_at_sec: u64,
+    /// Posted once by the DAO's screener, who pays the storage it takes.
+    verdict: Option<PostedVerdict>,
 }
 
 /// A payment, as the views return it.
@@ -115,6 +163,7 @@ pub struct RoundView {
     pub verdict_window_sec: u64,
     pub hold_window_sec: u64,
     pub funded_at_sec: Option<u64>,
+    pub verdict: Option<PostedVerdict>,
 }
 
 #[derive(BorshStorageKey)]
@@ -227,6 +276,7 @@ impl Headcount {
                 verdict_window_sec: config.verdict_window_sec,
                 hold_window_sec: config.hold_window_sec,
                 funded_at_sec: 0,
+                verdict: None,
             },
         );
         self.rounds.flush();
@@ -280,8 +330,232 @@ impl Headcount {
             verdict_window_sec: round.verdict_window_sec,
             hold_window_sec: round.hold_window_sec,
             funded_at_sec: (round.funded_at_sec != 0).then_some(round.funded_at_sec),
+            verdict: round.verdict.clone(),
         })
     }
+
+    pub fn get_verdict(&self, round_id: String) -> Option<PostedVerdict> {
+        self.rounds.get(&round_id)?.verdict.clone()
+    }
+
+    /// Funds a NEAR round. Only the round's DAO can call it, attaching exactly the round's total,
+    /// so for a Sputnik DAO it is a `FunctionCall` proposal with that deposit. Anything else is
+    /// refused and the deposit goes back.
+    #[payable]
+    pub fn fund_round(&mut self, round_id: String) {
+        let round = self.round_mut(&round_id);
+        require!(
+            round.token_id == NATIVE,
+            format!(
+                "round {round_id} pays in {token}: the DAO funds it with ft_transfer_call on {token}",
+                token = round.token_id
+            )
+        );
+        require!(
+            env::predecessor_account_id() == round.dao_id,
+            format!("only {} can fund its round", round.dao_id)
+        );
+        require!(
+            round.funded_at_sec == 0,
+            format!("round {round_id} is already funded")
+        );
+        let attached = env::attached_deposit().as_yoctonear();
+        require!(
+            attached == round.total,
+            format!(
+                "attach exactly {} yoctoNEAR, the round's total; {attached} attached",
+                round.total
+            )
+        );
+        round.funded_at_sec = now_sec();
+        env::log_str(&format!(
+            "fund_round: {round_id} funded with {attached} yoctoNEAR"
+        ));
+    }
+
+    /// NEP-141: a token round is funded by the DAO's `ft_transfer_call(headcount, total, msg =
+    /// round_id)` on the round's token, the call Trezu's bulk payments already file. Keeps the
+    /// tokens (returns 0) only when the token, the sender, the amount and the round all match;
+    /// otherwise returns the full amount, which the token sends back.
+    pub fn ft_on_transfer(&mut self, sender_id: AccountId, amount: U128, msg: String) -> U128 {
+        let token = env::predecessor_account_id();
+        match self.accept_token_funding(&token, &sender_id, amount.0, &msg) {
+            Ok(()) => {
+                env::log_str(&format!(
+                    "ft_on_transfer: {msg} funded with {} of {token}",
+                    amount.0
+                ));
+                U128(0)
+            }
+            Err(why) => {
+                env::log_str(&format!("ft_on_transfer: refused, sent back: {why}"));
+                amount
+            }
+        }
+    }
+
+    /// The DAO's screener posts its verdict on a round, once. Each held group names two or more
+    /// accounts from the round's list, and no account is in two groups. The verdict must come
+    /// within the round's verdict window, counted from its creation or, once funded, its funding.
+    /// Payable: the screener pays the verdict's storage; the rest comes back.
+    #[payable]
+    pub fn post_verdict(&mut self, round_id: String, verdict: Verdict) {
+        let screener_id = env::predecessor_account_id();
+        let dao_id = self.round_mut(&round_id).dao_id.clone();
+        let named = self.configs.get(&dao_id).map(|c| c.screener_id.clone());
+        require!(
+            named.as_ref() == Some(&screener_id),
+            format!("{screener_id} is not this DAO's screener")
+        );
+        let now = now_sec();
+        let round = self.round_mut(&round_id);
+        require!(
+            round.verdict.is_none(),
+            format!("round {round_id} already has a verdict")
+        );
+        let deadline = round.created_at_sec.max(round.funded_at_sec) + round.verdict_window_sec;
+        require!(
+            now <= deadline,
+            format!("the verdict window closed at {deadline} (unix seconds); it is now {now}")
+        );
+        check_verdict_fields(&verdict);
+        let held = held_positions(&round.payments, &verdict.groups);
+
+        let before = env::storage_usage();
+        for i in held {
+            round.payments[i].state = PaymentState::Held;
+        }
+        let groups = verdict.groups.len();
+        round.verdict = Some(PostedVerdict {
+            screener_id: screener_id.clone(),
+            posted_at_sec: now,
+            verdict,
+        });
+        self.rounds.flush();
+        settle_storage(before, &screener_id);
+        env::log_str(&format!(
+            "post_verdict: {screener_id} holds {groups} group(s) in round {round_id}"
+        ));
+    }
+}
+
+impl Headcount {
+    /// The round, for changing; refuses an id that names no round.
+    fn round_mut(&mut self, round_id: &str) -> &mut Round {
+        self.rounds
+            .get_mut(round_id)
+            .unwrap_or_else(|| env::panic_str(&format!("no round {round_id}")))
+    }
+
+    /// Marks a token round funded if `token` is its token, `sender` its DAO and `amount` its
+    /// total, and it is not funded yet. Otherwise says why not and changes nothing.
+    fn accept_token_funding(
+        &mut self,
+        token: &AccountId,
+        sender: &AccountId,
+        amount: u128,
+        round_id: &str,
+    ) -> Result<(), String> {
+        let round = self
+            .rounds
+            .get_mut(round_id)
+            .ok_or_else(|| format!("no round {round_id}"))?;
+        if round.token_id != token.as_str() {
+            return Err(format!(
+                "round {round_id} pays in {}, not {token}",
+                round.token_id
+            ));
+        }
+        if *sender != round.dao_id {
+            return Err(format!(
+                "only {} can fund its round, not {sender}",
+                round.dao_id
+            ));
+        }
+        if round.funded_at_sec != 0 {
+            return Err(format!("round {round_id} is already funded"));
+        }
+        if amount != round.total {
+            return Err(format!(
+                "round {round_id}'s total is {}, got {amount}",
+                round.total
+            ));
+        }
+        round.funded_at_sec = now_sec();
+        Ok(())
+    }
+}
+
+/// Refuses a verdict whose fields are out of bounds. The bounds keep its storage and checks small.
+fn check_verdict_fields(verdict: &Verdict) {
+    require!(
+        (1..=MAX_RULE_LEN).contains(&verdict.rule.len()),
+        format!("rule must be 1 to {MAX_RULE_LEN} characters")
+    );
+    require!(
+        verdict.report_sha256.len() == 64
+            && verdict
+                .report_sha256
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "report_sha256 must be 64 lowercase hex characters"
+    );
+    require!(
+        verdict
+            .report_url
+            .as_ref()
+            .is_none_or(|url| url.len() <= MAX_URL_LEN),
+        format!("report_url must be at most {MAX_URL_LEN} characters")
+    );
+    for (i, group) in verdict.groups.iter().enumerate() {
+        let n = i + 1;
+        require!(
+            (1..=MAX_SIGNALS).contains(&group.signals.len())
+                && group
+                    .signals
+                    .iter()
+                    .all(|s| (1..=MAX_SIGNAL_LEN).contains(&s.len())),
+            format!(
+                "group {n} needs 1 to {MAX_SIGNALS} signals of 1 to {MAX_SIGNAL_LEN} characters"
+            )
+        );
+        require!(
+            group.evidence.len() <= MAX_EVIDENCE
+                && group.evidence.iter().all(|e| e.len() <= MAX_EVIDENCE_LEN),
+            format!(
+                "group {n} may cite at most {MAX_EVIDENCE} pieces of evidence of up to {MAX_EVIDENCE_LEN} characters"
+            )
+        );
+    }
+}
+
+/// Positions in `payments` (sorted by recipient) of every account the verdict holds. Refuses a
+/// group of fewer than 2, an account that is not on the list, and an account named twice.
+fn held_positions(payments: &[Payment], groups: &[HeldGroup]) -> Vec<usize> {
+    let mut held: Vec<usize> = Vec::new();
+    for (i, group) in groups.iter().enumerate() {
+        require!(
+            group.accounts.len() >= 2,
+            format!(
+                "a held group needs at least 2 accounts; group {} has {}",
+                i + 1,
+                group.accounts.len()
+            )
+        );
+        for account in &group.accounts {
+            let position = payments
+                .binary_search_by(|p| p.recipient.as_str().cmp(account.as_str()))
+                .unwrap_or_else(|_| {
+                    env::panic_str(&format!("{account} is not on this round's list"))
+                });
+            require!(
+                !held.contains(&position),
+                format!("{account} appears twice in the verdict")
+            );
+            held.push(position);
+        }
+    }
+    held
 }
 
 /// Current block time, in seconds.
