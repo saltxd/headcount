@@ -18,7 +18,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { OUT, ROOT, WASM_RUSTFLAGS, codeHash, lower } from "./wasm.mjs";
+import { OUT, ROOT, WASM_ENCODED_RUSTFLAGS, codeHash, lower } from "./wasm.mjs";
 
 const CRATES = [
   { pkg: "headcount", file: "headcount.wasm" },
@@ -26,11 +26,13 @@ const CRATES = [
 ];
 const RELEASE = join(ROOT, "target", "wasm32-unknown-unknown", "release");
 
+// CARGO_ENCODED_RUSTFLAGS outranks RUSTFLAGS; RUSTFLAGS is dropped too, so no stray value reads as ours.
+const { RUSTFLAGS: _ignored, ...inherited } = process.env;
 for (const { pkg } of CRATES) {
   execFileSync("cargo", ["build", "--locked", "--release", "--target", "wasm32-unknown-unknown", "-p", pkg], {
     cwd: ROOT,
     stdio: "inherit",
-    env: { ...process.env, RUSTFLAGS: WASM_RUSTFLAGS },
+    env: { ...inherited, CARGO_ENCODED_RUSTFLAGS: WASM_ENCODED_RUSTFLAGS },
   });
 }
 

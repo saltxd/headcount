@@ -10,6 +10,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,13 +19,34 @@ export const OUT = join(ROOT, "out");
 const WASM_OPT = join(ROOT, "node_modules", ".bin", "wasm-opt");
 
 /**
- * Flags for the wasm32 cargo build. RUSTFLAGS replaces rustflags from any cargo config file, so
- * nothing outside the command changes how a contract compiles.
- *   --cfg near           near-sdk's on-chain host path, the same flag cargo-near sets; without it
- *                        contract panics trap as a bare `unreachable` and lose their message.
- *   -C target-cpu=mvp    trims post-MVP features up front; wasm-opt lowers what std still carries.
+ * Folders whose paths a build would otherwise embed: panic locations in dependencies carry their
+ * source paths, which sit under CARGO_HOME (the crates registry), RUSTUP_HOME (the toolchain) and
+ * this repository. Each is remapped to a fixed name, so the wasm holds no folder of the machine
+ * that built it, and two machines with the same toolchain, Cargo.lock and binaryen build the same
+ * bytes, and with them the same code hash.
  */
-export const WASM_RUSTFLAGS = "--cfg near -C target-cpu=mvp";
+export const PATH_REMAPS = [
+  [process.env.CARGO_HOME ?? join(homedir(), ".cargo"), "/cargo"],
+  [process.env.RUSTUP_HOME ?? join(homedir(), ".rustup"), "/rustup"],
+  [ROOT, "/headcount"],
+];
+
+/**
+ * Flags for the wasm32 cargo build, as CARGO_ENCODED_RUSTFLAGS takes them: one flag per field,
+ * separated by 0x1f, so a path may hold spaces. It replaces RUSTFLAGS and rustflags from any cargo
+ * config file, so nothing outside the command changes how a contract compiles.
+ *   --cfg near             near-sdk's on-chain host path, the same flag cargo-near sets; without it
+ *                          contract panics trap as a bare `unreachable` and lose their message.
+ *   -C target-cpu=mvp      trims post-MVP features up front; wasm-opt lowers what std still carries.
+ *   --remap-path-prefix    PATH_REMAPS, above.
+ */
+export const WASM_ENCODED_RUSTFLAGS = [
+  "--cfg",
+  "near",
+  "-C",
+  "target-cpu=mvp",
+  ...PATH_REMAPS.map(([from, to]) => `--remap-path-prefix=${from}=${to}`),
+].join("\x1f");
 
 const LOWERING = [
   "-Oz",
