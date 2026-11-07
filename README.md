@@ -132,9 +132,9 @@ cargo test      # the contract's 114 unit tests
 `npm test` and `npm run demo` first run `npm run build`: fetch the factory's Sputnik DAO v3.2 bytes
 (`npm run fetch:sputnik`), build the Headcount contract and Sputnik's test token
 (`npm run build:contracts`), and put neard 2.13.4 in place. From a fresh clone on an Apple M4 Pro
-(12 cores), `npm ci && npm test` took 68 s on Node 26.13 and on Node 22.18, the build included (it
-was 329 s before the sandbox's block time changed); after that, `npm run demo` takes about 15 s and
-`cargo test` about 15 s.
+(12 cores), `npm ci && npm test` took 62 to 70 s over four runs on Node 26.13 and Node 22.18, the
+build included (it was 329 s before the sandbox's block time changed); after that, `npm run demo`
+takes about 15 s and `cargo test` about 15 s.
 
 ### What `npm run demo` prints
 
