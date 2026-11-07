@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /**
- * Builds Sputnik DAO v3.2 (`sputnikdao2`) and the NEP-141 test token from source, at the exact
- * commit the NEAR mainnet factory names for v3.2.
+ * Prepares Sputnik DAO v3.2 (`sputnikdao2`) and the NEP-141 test token for the sandbox. The DAO is
+ * the exact bytes the NEAR mainnet factory stores for v3.2 (fetched with one keyless view call and
+ * checked against the factory's recorded code hash); the token is built from source at the commit
+ * the factory names for v3.2.
  *
  * Why this commit: `sputnik-dao.near` reports `get_default_version` = [3, 2] and
  * `get_default_code_hash` = DtHZA1mUmGYeScEaUoUZYQGGFHSMpnjMCvkr5U9hJXuF, and its
@@ -18,15 +20,15 @@
  *      cargo-near does internally, keeps the toolchain to cargo + npm.
  *   4. Print each wasm's NEAR code hash (base58 of its SHA-256) beside the factory's.
  *
- * This is an ordinary cargo build, not Sputnik's reproducible Docker build, so the code hash
- * differs from the factory's: the source is identical, the compiler environment is not.
+ * A plain cargo build of the DAO never matched the factory's hash (Sputnik releases with a
+ * reproducible Docker build), which is why the DAO is fetched, not built.
  *
  * Output: out/sputnikdao2.wasm and out/test_token.wasm, which the sandbox tests deploy.
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { OUT, ROOT, WASM_RUSTFLAGS, codeHash, lower } from "./wasm.mjs";
 
@@ -37,10 +39,14 @@ const FACTORY_V3_2_CODE_HASH = "DtHZA1mUmGYeScEaUoUZYQGGFHSMpnjMCvkr5U9hJXuF";
 const SRC = join(ROOT, "target", "sputnik", "src");
 const RELEASE = join(SRC, "target", "wasm32-unknown-unknown", "release");
 
-const CRATES = [
-  { pkg: "sputnikdao2", file: "sputnikdao2.wasm" },
-  { pkg: "test-token", file: "test_token.wasm" },
-];
+// The DAO is not built here: it is the factory's own stored bytes (step 1b). Only the test token
+// is built from source.
+const CRATES = [{ pkg: "test-token", file: "test_token.wasm" }];
+
+// Keyless public RPC; one view call per cold cache.
+const RPC = "https://free.rpc.fastnear.com";
+const FACTORY = "sputnik-dao.near";
+const FACTORY_WASM = join(ROOT, "target", "sputnik", "factory-v3.2.wasm");
 
 const run = (cmd, args, options = {}) => execFileSync(cmd, args, { stdio: "inherit", ...options });
 const read = (cmd, args, options = {}) => execFileSync(cmd, args, { encoding: "utf8", ...options }).trim();
@@ -70,6 +76,47 @@ if (head !== COMMIT) {
   throw new Error(`target/sputnik/src is at ${head}, expected ${COMMIT}`);
 }
 
+// 1b. The exact v3.2 bytes: the factory's `get_code(code_hash)` returns what it stores and
+// deploys. They are accepted only if their hash is the one the factory records, so a bad RPC
+// answer cannot get in. MIT-licensed, but fetched rather than committed (out/ is gitignored).
+const fetchFactoryCode = async () => {
+  const args = Buffer.from(JSON.stringify({ code_hash: FACTORY_V3_2_CODE_HASH })).toString("base64");
+  const response = await fetch(RPC, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "query",
+      params: {
+        request_type: "call_function",
+        finality: "final",
+        account_id: FACTORY,
+        method_name: "get_code",
+        args_base64: args,
+      },
+    }),
+  });
+  const body = await response.json();
+  if (!Array.isArray(body?.result?.result)) {
+    throw new Error(`${FACTORY}.get_code failed: ${JSON.stringify(body).slice(0, 300)}`);
+  }
+  return Buffer.from(body.result.result);
+};
+
+mkdirSync(OUT, { recursive: true });
+let dao = existsSync(FACTORY_WASM) ? readFileSync(FACTORY_WASM) : null;
+if (dao === null || codeHash(dao) !== FACTORY_V3_2_CODE_HASH) {
+  console.log(`Fetching ${FACTORY}'s stored v3.2 code (${FACTORY_V3_2_CODE_HASH})`);
+  dao = await fetchFactoryCode();
+  if (codeHash(dao) !== FACTORY_V3_2_CODE_HASH) {
+    throw new Error(`${FACTORY} returned code hashing to ${codeHash(dao)}, expected ${FACTORY_V3_2_CODE_HASH}`);
+  }
+  mkdirSync(dirname(FACTORY_WASM), { recursive: true });
+  writeFileSync(FACTORY_WASM, dao);
+}
+writeFileSync(join(OUT, "sputnikdao2.wasm"), dao);
+
 // 2. Sputnik's toolchain, then the two crates, with the wasm flags every contract here gets
 // (WASM_RUSTFLAGS in scripts/wasm.mjs says what each flag does).
 try {
@@ -91,7 +138,6 @@ run(
 );
 
 // 3. Lower to what NEAR's VM accepts.
-mkdirSync(OUT, { recursive: true });
 for (const { file } of CRATES) {
   const built = join(RELEASE, file);
   if (!existsSync(built)) throw new Error(`cargo reported success but ${built} is missing`);
@@ -100,9 +146,9 @@ for (const { file } of CRATES) {
 
 // 4. What was built.
 const rustc = read("rustc", ["--version"], { cwd: SRC });
-console.log(`\nBuilt Sputnik DAO v3.2 from ${COMMIT.slice(0, 8)} with ${rustc}:`);
+console.log(`\nSputnik DAO v3.2: factory bytes, code hash ${codeHash(dao)} (the factory's); test token built from ${COMMIT.slice(0, 8)} with ${rustc}:`);
+console.log(`  out/sputnikdao2.wasm  ${dao.length} bytes`);
 for (const { file } of CRATES) {
   const bytes = readFileSync(join(OUT, file));
   console.log(`  out/${file}  ${bytes.length} bytes  code hash ${codeHash(bytes)}`);
 }
-console.log(`  mainnet factory v3.2 code hash ${FACTORY_V3_2_CODE_HASH} (Sputnik's reproducible Docker build)`);

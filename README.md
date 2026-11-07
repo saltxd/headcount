@@ -5,15 +5,15 @@
 Built at NEAR HACKATHON. Track: Social Money.
 
 > **Status (2026-11-07).** What runs today, in a local `near-workspaces` sandbox: the real
-> Sputnik DAO v3.2 contract, built from source at the commit NEAR's mainnet factory names for v3.2,
+> Sputnik DAO v3.2 contract, the exact bytes NEAR's mainnet factory deploys (code hash checked),
 > with the three roles Trezu gives every treasury, and next to it the Headcount contract. A DAO
 > names its screener by vote; a requestor turns a Trezu-format CSV into a round whose id is the id
 > Trezu itself gives that list; the DAO funds the round by vote, in NEAR or in a token; the screener
-> posts which recipients are linked; anyone pays the cleared recipients in batches; the council
-> releases or returns each held group by vote; and whatever nobody decides in time goes back to the
-> DAO. The screener program that reads the chain is not built yet: the verdicts here are written by
-> hand, and parts marked **[NOT BUILT YET]** describe the intended shape, not working code. Nothing
-> here claims something runs unless you can run it from the steps given.
+> reads the chain and posts which recipients are linked; anyone pays the cleared recipients in
+> batches; the council releases or returns each held group by vote; and whatever nobody decides in
+> time goes back to the DAO. The screener runs against the sandbox chain (scenario 3); its mainnet
+> read-only mode is not built yet, and parts marked **[NOT BUILT YET]** describe the intended shape,
+> not working code. Nothing here claims something runs unless you can run it from the steps given.
 
 ---
 
@@ -45,7 +45,7 @@ round, and it can only pay accounts on that round's list or return money to the 
   -----------------------------------        ------------------              ---------------------------
   1. vote: FunctionCall configure(screener) -> config for this DAO
   2. requestor: create_round(list)          -> round id = Trezu's list id
-                                               <- reads the list ----------- 3. reads the chain [NOT BUILT YET]
+                                               <- reads the list ----------- 3. reads the chain (sandbox; mainnet mode NOT BUILT YET)
                                                post_verdict(groups) <------- only this account
   4. vote: FunctionCall that funds the round (the call Trezu's bulk payments already file)
   5. anyone: payout_batch                   -> pays cleared recipients, keeps held groups
@@ -121,7 +121,7 @@ npm test
 cargo test
 ```
 
-`npm test` first builds Sputnik DAO v3.2 from source (`npm run build:sputnik`) and the Headcount
+`npm test` first fetches Sputnik DAO v3.2 (and builds its test token; `npm run build:sputnik`) and the Headcount
 contract (`npm run build:contract`), puts neard 2.13.4 in place, then runs the tests. The first run
 takes a few minutes; most of it is compiling.
 
@@ -175,8 +175,8 @@ takes a few minutes; most of it is compiling.
 (`2.3.1` is the `sputnikdao2` crate version; the factory calls this release v3.2. Gas figures move
 by a few hundredths of a TGas from run to run, and the gas rewards in the last line by a little more.)
 
-The scenario numbers are the design's. Every scenario but 3 runs, on verdicts written by hand; scenario
-3 (the screener reads the chain) arrives with the screener, marked [NOT BUILT YET]. To run scenarios 9
+The scenario numbers are the design's. Every scenario runs. Scenario 3 is the screener reading the
+sandbox chain and posting its own verdict; the others use verdicts written by hand. To run scenarios 9
 and 10 past a deadline in seconds, the DAO first votes its windows down to 60 seconds, and the sandbox
 clock is moved forward with empty blocks rather than waited out; round16 keeps the 2-day windows it
 was created with.
@@ -198,14 +198,14 @@ Set `NEAR_PRINT_LOGS=1` to see every receipt log and refusal the sandbox prints.
 
 ### The DAO in the sandbox is the real one
 
-- **Sputnik DAO v3.2, built from source.** `sputnik-dao.near`, the mainnet factory, reports default
-  version `[3, 2]` with code hash `DtHZA1mUmGYeScEaUoUZYQGGFHSMpnjMCvkr5U9hJXuF`, and maps that hash
-  to commit `2b0f34a3` of
-  [near-daos/sputnik-dao-contract](https://github.com/near-daos/sputnik-dao-contract).
-  `scripts/build-sputnik.mjs` fetches that commit with git and refuses any other, builds
-  `sputnikdao2` and its `test-token` with Sputnik's own `rust-toolchain.toml` and `Cargo.lock`
-  (`--locked`), and lowers the wasm for NEAR's VM. It is an ordinary cargo build, not Sputnik's
-  reproducible Docker build, so its code hash differs from the factory's; the script prints both.
+- **Sputnik DAO v3.2, the factory's own bytes.** `sputnik-dao.near`, the mainnet factory, reports
+  default version `[3, 2]` with code hash `DtHZA1mUmGYeScEaUoUZYQGGFHSMpnjMCvkr5U9hJXuF`.
+  `scripts/build-sputnik.mjs` reads those bytes with one keyless view call (`get_code`) and refuses
+  them unless they hash to that value; a sandbox test asserts the deployed DAO's code hash equals it.
+  The factory maps the hash to commit `2b0f34a3` of
+  [near-daos/sputnik-dao-contract](https://github.com/near-daos/sputnik-dao-contract) (MIT); the
+  test token is built from that commit with its own `rust-toolchain.toml` and `Cargo.lock`
+  (`--locked`) and lowered for NEAR's VM. The first run needs network access for the fetch.
 - **Trezu's roles.** `trezuPolicy` in `ts/sandbox/harness.ts` writes the policy Trezu's backend
   writes when it creates a treasury (`build_policy` in
   [NEAR-DevHub/trezu](https://github.com/NEAR-DevHub/trezu), `nt-be/src/handlers/treasury/create.rs`):
