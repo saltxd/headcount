@@ -1,0 +1,19 @@
+[package]
+name = "headcount"
+description = "Screened reward rounds for Sputnik DAO and Trezu treasuries on NEAR"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk.workspace = true
+
+[dev-dependencies]
+# near-sdk refuses to compile for the host without this feature (a deliberate compile_error!), so
+# `cargo test` needs it; it also brings the mocked VM the unit tests will use.
+near-sdk = { workspace = true, features = ["unit-testing"] }

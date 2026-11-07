@@ -1,0 +1,11 @@
+# One Rust toolchain for everything this repository compiles.
+#
+# "1.86" is the exact channel string Sputnik DAO v3.2 pins in its own rust-toolchain.toml
+# (near-daos/sputnik-dao-contract at 2b0f34a3). Using the same string means building Sputnik from
+# source (scripts/build-sputnik.mjs) and building Headcount's own contract share one rustup
+# install instead of downloading two.
+[toolchain]
+channel = "1.86"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"

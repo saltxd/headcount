@@ -1,0 +1,25 @@
+[workspace]
+resolver = "3"
+members = ["crates/headcount"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/saltxd/headcount"
+
+[workspace.dependencies]
+# The near-sdk that Sputnik DAO v3.2 locks (near-daos/sputnik-dao-contract 2b0f34a3, Cargo.lock),
+# so Headcount's contract and the DAO it serves compile against the same SDK with the same Rust
+# (rust-toolchain.toml).
+near-sdk = "=5.24.1"
+
+# The release profile Sputnik v3.2 builds with, so both contracts are compiled the same way.
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true
+strip = "symbols"

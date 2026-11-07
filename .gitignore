@@ -1,0 +1,37 @@
+# --- Rust ---
+# target/ also holds the Sputnik DAO source checkout (target/sputnik/), fetched at build time.
+target/
+**/*.rs.bk
+*.pdb
+Cargo.lock.orig
+
+# Compiled contract artifacts
+out/
+*.wasm
+
+# --- Node / TypeScript ---
+node_modules/
+dist/
+*.tsbuildinfo
+npm-debug.log*
+.npm/
+
+# --- Keys and secrets: never commit anything that can sign ---
+# The sandbox creates its accounts and keys at test time and never writes them here.
+# These patterns are a backstop, not a policy.
+*.pem
+*.key
+*.p8
+*.pk8
+neardev/
+.near-credentials/
+*credentials*.json
+.env
+.env.*
+!.env.example
+
+# --- Editors / OS ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
