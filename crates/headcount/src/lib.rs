@@ -13,6 +13,12 @@
 //! (`refund_expired`). So money leaves Headcount only to a listed recipient the verdict cleared, to
 //! a held recipient the council released, or to the DAO.
 //!
+//! A posted verdict is stored apart from its round, and only the views read it: the round keeps,
+//! for each payment, the number of the held group it is in. So no call that funds, pays, decides or
+//! refunds ever loads the verdict, and what those calls and their callbacks burn never depends on its
+//! size. That matters most for the callbacks, which run after their transfers have left: one that ran
+//! out of gas would leave its payments `Paying` or `Refunding` for good.
+//!
 //! Every byte Headcount stores is paid for by the call that stores it, and any deposit beyond that
 //! cost goes straight back. So the contract's own balance only ever covers its own code and state,
 //! and money a round holds is never spent on storage: funding, paying and refunding a round never
@@ -60,9 +66,16 @@ pub const GAS_PER_NEAR_PAYMENT: Gas = Gas::from_tgas(1);
 /// transfer to one the fees of creating it, whether or not it exists yet, about 8.4 TGas in all.
 pub const GAS_PER_NEAR_PAYMENT_TO_IMPLICIT: Gas = Gas::from_tgas(10);
 
-/// Static gas for the callback that records how a batch of transfers went. It also gets every
-/// unit of gas the calling method leaves unused.
-pub const GAS_FOR_CALLBACK: Gas = Gas::from_tgas(10);
+/// Static gas for the callback that records how a batch of transfers went (`on_payouts`) or how a
+/// transfer back to the DAO went (`on_refund`). It also gets every unit of gas the calling method
+/// leaves unused, but a caller who attaches the least gas that succeeds leaves it almost nothing, so
+/// this alone must always be enough: a callback that ran out of gas would leave its payments
+/// `Paying` or `Refunding` for good, since only it learns whether their transfers arrived. A
+/// callback reads and writes the round and never the verdict, so what it burns has a ceiling: on
+/// the largest rounds the bounds allow (100 recipients with 64-character ids, 98 of them held, a
+/// 220 KB verdict), each callback burnt at most 3.33 TGas in the sandbox, called at the least gas
+/// that succeeds (ts/sandbox/least-gas.test.ts). 20 TGas is six times that.
+pub const GAS_FOR_CALLBACK: Gas = Gas::from_tgas(20);
 
 /// Gas a paying or refunding method keeps back for its own remaining work: writing the round and
 /// the callback receipt's fees.
@@ -147,10 +160,18 @@ pub enum GroupState {
 #[derive(Clone, Copy, Debug)]
 struct GroupRecord {
     state: GroupState,
-    /// For `ReleasedOne`: the released account's position in the group's `accounts`.
+    /// For `ReleasedOne`: the released account's position in the round's list.
     released: u32,
     /// When the council decided, or the group expired; 0 while open.
     decided_at_sec: u64,
+}
+
+impl GroupRecord {
+    const OPEN: GroupRecord = GroupRecord {
+        state: GroupState::Open,
+        released: 0,
+        decided_at_sec: 0,
+    };
 }
 
 /// A held group, as the views return it.
@@ -208,6 +229,10 @@ struct Payment {
     recipient: AccountId,
     amount: u128,
     state: PaymentState,
+    /// The held group the verdict put it in, numbered from 1 in the verdict's order; 0 if the
+    /// verdict cleared it or there is no verdict yet. Set once, with the verdict, and never changed,
+    /// so it says whether the recipient was held whatever the council decided. Fixed size.
+    group: u32,
 }
 
 /// A round, as stored. Every field that changes after creation has a fixed size, so funding a
@@ -231,8 +256,9 @@ struct Round {
     hold_window_sec: u64,
     /// When the DAO funded the round; 0 until then.
     funded_at_sec: u64,
-    /// Posted once by the DAO's screener, who pays the storage it takes.
-    verdict: Option<PostedVerdict>,
+    /// When the DAO's screener posted its verdict, once; the screener pays the storage it takes.
+    /// The verdict itself is stored apart (`Headcount::verdicts`), read only by the views.
+    verdict_posted_at_sec: Option<u64>,
     /// One per held group of the verdict, in its order; added with the verdict.
     groups: Vec<GroupRecord>,
     /// What reached recipients, and what reached the DAO back, as each transfer confirmed. A
@@ -251,17 +277,25 @@ impl Round {
     /// The last second a held group waits for the council before anyone can send it back to the
     /// DAO. The hold window counts from the later of the verdict and the funding.
     fn hold_deadline(&self) -> Option<u64> {
-        let posted = self.verdict.as_ref()?;
+        let posted_at_sec = self.verdict_posted_at_sec?;
         (self.funded_at_sec != 0)
-            .then(|| posted.posted_at_sec.max(self.funded_at_sec) + self.hold_window_sec)
+            .then(|| posted_at_sec.max(self.funded_at_sec) + self.hold_window_sec)
     }
 
     fn count(&self, state: PaymentState) -> usize {
         self.payments.iter().filter(|p| p.state == state).count()
     }
 
-    fn view(&self, round_id: String) -> RoundView {
-        let groups = match &self.verdict {
+    /// Positions in the list of the payments the verdict put in held group `group`, in list order.
+    fn members(&self, group: u32) -> Vec<u32> {
+        (0..self.payments.len() as u32)
+            .filter(|&i| self.payments[i as usize].group == group)
+            .collect()
+    }
+
+    /// The round as the views return it, with `posted`, its verdict as stored apart.
+    fn view(&self, round_id: String, posted: Option<&PostedVerdict>) -> RoundView {
+        let groups = match posted {
             None => Vec::new(),
             Some(posted) => posted
                 .verdict
@@ -274,7 +308,7 @@ impl Round {
                     accounts: group.accounts.clone(),
                     state: record.state,
                     released: (record.state == GroupState::ReleasedOne)
-                        .then(|| group.accounts[record.released as usize].clone()),
+                        .then(|| self.payments[record.released as usize].recipient.clone()),
                     decided_at_sec: (record.decided_at_sec != 0).then_some(record.decided_at_sec),
                 })
                 .collect(),
@@ -300,7 +334,7 @@ impl Round {
             verdict_window_sec: self.verdict_window_sec,
             hold_window_sec: self.hold_window_sec,
             funded_at_sec: (self.funded_at_sec != 0).then_some(self.funded_at_sec),
-            verdict: self.verdict.clone(),
+            verdict: posted.cloned(),
             groups,
             paid: U128(self.paid),
             refunded: U128(self.refunded),
@@ -377,6 +411,7 @@ enum StorageKey {
     Rounds,
     RoundCounts,
     RoundIndex,
+    Verdicts,
 }
 
 #[near(contract_state)]
@@ -387,6 +422,9 @@ pub struct Headcount {
     /// How many rounds each DAO has, and their ids in creation order, for `get_rounds`.
     round_counts: LookupMap<AccountId, u32>,
     round_index: LookupMap<(AccountId, u32), String>,
+    /// Each round's verdict, by round id. Only `post_verdict` writes one and only the views read
+    /// them; a round keeps what its money needs (each payment's group) in fixed-size fields.
+    verdicts: LookupMap<String, PostedVerdict>,
 }
 
 #[near]
@@ -398,6 +436,7 @@ impl Headcount {
             rounds: LookupMap::new(StorageKey::Rounds),
             round_counts: LookupMap::new(StorageKey::RoundCounts),
             round_index: LookupMap::new(StorageKey::RoundIndex),
+            verdicts: LookupMap::new(StorageKey::Verdicts),
         }
     }
 
@@ -487,7 +526,7 @@ impl Headcount {
                 verdict_window_sec: config.verdict_window_sec,
                 hold_window_sec: config.hold_window_sec,
                 funded_at_sec: 0,
-                verdict: None,
+                verdict_posted_at_sec: None,
                 groups: Vec::new(),
                 paid: 0,
                 refunded: 0,
@@ -529,7 +568,7 @@ impl Headcount {
 
     pub fn get_round(&self, round_id: String) -> Option<RoundView> {
         let round = self.rounds.get(&round_id)?;
-        Some(round.view(round_id))
+        Some(round.view(round_id.clone(), self.verdicts.get(&round_id)))
     }
 
     /// `dao_id`'s rounds in the order they were created, `limit` of them from `from_index`.
@@ -538,13 +577,13 @@ impl Headcount {
         (from_index..count.min(from_index.saturating_add(limit)))
             .filter_map(|i| {
                 let id = self.round_index.get(&(dao_id.clone(), i))?;
-                Some(self.rounds.get(id)?.view(id.clone()))
+                Some(self.rounds.get(id)?.view(id.clone(), self.verdicts.get(id)))
             })
             .collect()
     }
 
     pub fn get_verdict(&self, round_id: String) -> Option<PostedVerdict> {
-        self.rounds.get(&round_id)?.verdict.clone()
+        self.verdicts.get(&round_id).cloned()
     }
 
     /// `account_id`'s record with `dao_id`, counted from that DAO's rounds in creation order:
@@ -582,14 +621,7 @@ impl Headcount {
                 continue;
             };
             record.rounds_listed += 1;
-            let held = round.verdict.as_ref().is_some_and(|posted| {
-                posted
-                    .verdict
-                    .groups
-                    .iter()
-                    .any(|g| g.accounts.contains(&account_id))
-            });
-            if held {
+            if round.payments[k].group != 0 {
                 record.rounds_held += 1;
             }
             match round.payments[k].state {
@@ -673,7 +705,7 @@ impl Headcount {
         let now = now_sec();
         let round = self.round_mut(&round_id);
         require!(
-            round.verdict.is_none(),
+            round.verdict_posted_at_sec.is_none(),
             format!("round {round_id} already has a verdict")
         );
         let deadline = round.verdict_deadline();
@@ -685,24 +717,23 @@ impl Headcount {
         let held = held_positions(&round.payments, &verdict.groups);
 
         let before = env::storage_usage();
-        for i in held {
+        for (i, group) in held {
             round.payments[i].state = PaymentState::Held;
+            round.payments[i].group = group;
         }
         let groups = verdict.groups.len();
-        round.groups = vec![
-            GroupRecord {
-                state: GroupState::Open,
-                released: 0,
-                decided_at_sec: 0,
-            };
-            groups
-        ];
-        round.verdict = Some(PostedVerdict {
-            screener_id: screener_id.clone(),
-            posted_at_sec: now,
-            verdict,
-        });
+        round.groups = vec![GroupRecord::OPEN; groups];
+        round.verdict_posted_at_sec = Some(now);
+        self.verdicts.insert(
+            round_id.clone(),
+            PostedVerdict {
+                screener_id: screener_id.clone(),
+                posted_at_sec: now,
+                verdict,
+            },
+        );
         self.rounds.flush();
+        self.verdicts.flush();
         settle_storage(before, &screener_id);
         env::log_str(&format!(
             "post_verdict: {screener_id} holds {groups} group(s) in round {round_id}"
@@ -718,7 +749,7 @@ impl Headcount {
         let before = env::storage_usage();
         let round = self.round_mut(&round_id);
         require!(
-            round.verdict.is_some(),
+            round.verdict_posted_at_sec.is_some(),
             format!("round {round_id} has no verdict yet: nothing is paid before the screen")
         );
         require!(
@@ -814,12 +845,11 @@ impl Headcount {
                 round.dao_id
             )
         );
-        let Some(posted) = round.verdict.as_ref() else {
-            env::panic_str(&format!(
-                "round {round_id} has no verdict, so no held groups"
-            ))
-        };
-        let count = posted.verdict.groups.len();
+        require!(
+            round.verdict_posted_at_sec.is_some(),
+            format!("round {round_id} has no verdict, so no held groups")
+        );
+        let count = round.groups.len();
         require!(
             group >= 1 && group as usize <= count,
             format!(
@@ -840,38 +870,39 @@ impl Headcount {
                 round.groups[g].state
             )
         );
-        let accounts = posted.verdict.groups[g].accounts.clone();
+        // The group's members are the payments the verdict put in it: no need to read the verdict.
+        let members = round.members(group);
 
         let (state, released) = match &decision {
             Decision::ReleaseAll => (GroupState::ReleasedAll, None),
             Decision::ReleaseOne { account_id } => {
-                let k = accounts
+                let i = members
                     .iter()
-                    .position(|a| a == account_id)
+                    .copied()
+                    .find(|&i| round.payments[i as usize].recipient == *account_id)
                     .unwrap_or_else(|| {
                         env::panic_str(&format!("{account_id} is not in group {group}"))
                     });
-                (GroupState::ReleasedOne, Some(k))
+                (GroupState::ReleasedOne, Some(i))
             }
             Decision::Refund => (GroupState::Refunded, None),
         };
         let mut back: Vec<u32> = Vec::new();
-        for (k, account) in accounts.iter().enumerate() {
-            let i = position(&round.payments, account);
+        for i in members {
             let release = match state {
                 GroupState::ReleasedAll => true,
-                GroupState::ReleasedOne => released == Some(k),
+                GroupState::ReleasedOne => released == Some(i),
                 _ => false,
             };
             if release {
-                round.payments[i].state = PaymentState::Released;
+                round.payments[i as usize].state = PaymentState::Released;
             } else {
-                back.push(i as u32);
+                back.push(i);
             }
         }
         round.groups[g] = GroupRecord {
             state,
-            released: released.unwrap_or(0) as u32,
+            released: released.unwrap_or(0),
             decided_at_sec: now,
         };
         let returned = if back.is_empty() {
@@ -902,7 +933,7 @@ impl Headcount {
         let mut back: Vec<u32> = Vec::new();
         let mut expired_groups = 0;
         let mut reason = None;
-        match (&round.verdict, round.hold_deadline()) {
+        match (round.verdict_posted_at_sec, round.hold_deadline()) {
             (None, _) => {
                 let deadline = round.verdict_deadline();
                 if now > deadline {
@@ -917,22 +948,20 @@ impl Headcount {
                     ));
                 }
             }
-            (Some(posted), Some(deadline)) => {
+            (Some(_), Some(deadline)) => {
                 let open = round.groups.iter().any(|g| g.state == GroupState::Open);
                 if open && now > deadline {
-                    for (g, record) in round.groups.iter_mut().enumerate() {
-                        if record.state != GroupState::Open {
+                    for g in 0..round.groups.len() {
+                        if round.groups[g].state != GroupState::Open {
                             continue;
                         }
-                        *record = GroupRecord {
+                        round.groups[g] = GroupRecord {
                             state: GroupState::Expired,
                             released: 0,
                             decided_at_sec: now,
                         };
                         expired_groups += 1;
-                        for account in &posted.verdict.groups[g].accounts {
-                            back.push(position(&round.payments, account) as u32);
-                        }
+                        back.extend(round.members(g as u32 + 1));
                     }
                 } else if open {
                     reason = Some(format!(
@@ -1162,26 +1191,26 @@ fn check_verdict_fields(verdict: &Verdict) {
     }
 }
 
-/// Positions in `payments` (sorted by recipient) of every account the verdict holds. Refuses a
-/// group of fewer than 2, an account that is not on the list, and an account named twice.
-fn held_positions(payments: &[Payment], groups: &[HeldGroup]) -> Vec<usize> {
-    let mut held: Vec<usize> = Vec::new();
-    for (i, group) in groups.iter().enumerate() {
+/// Every account the verdict holds: its position in `payments` (sorted by recipient) and its
+/// group's number, counting from 1. Refuses a group of fewer than 2, an account that is not on the
+/// list, and an account named twice.
+fn held_positions(payments: &[Payment], groups: &[HeldGroup]) -> Vec<(usize, u32)> {
+    let mut held: Vec<(usize, u32)> = Vec::new();
+    for (number, group) in (1..).zip(groups) {
         require!(
             group.accounts.len() >= 2,
             format!(
-                "a held group needs at least 2 accounts; group {} has {}",
-                i + 1,
+                "a held group needs at least 2 accounts; group {number} has {}",
                 group.accounts.len()
             )
         );
         for account in &group.accounts {
             let at = position(payments, account);
             require!(
-                !held.contains(&at),
+                held.iter().all(|&(i, _)| i != at),
                 format!("{account} appears twice in the verdict")
             );
-            held.push(at);
+            held.push((at, number));
         }
     }
     held
@@ -1309,6 +1338,7 @@ fn checked_list(token_id: &str, payments: Vec<PaymentInput>) -> (Vec<Payment>, u
                 recipient: p.recipient,
                 amount: p.amount.0,
                 state: PaymentState::Pending,
+                group: 0,
             }
         })
         .collect();

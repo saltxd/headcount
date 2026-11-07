@@ -240,11 +240,12 @@ test("anyone pays it in batches sized to what each NEAR payment costs; a payment
   for (const r of cleared) before.set(r, await nearOf(r));
   for (const r of [...implicit, ID("ghost")]) assert.equal(before.get(r), null, `${r} does not exist yet`);
 
-  // 40 TGas leaves about 16 for transfers: enough for one implicit account at its real cost, never
-  // for all nine, whatever the list order. Counted at 1 TGas each, all nine would be scheduled, and
-  // the six account creations (about 50 TGas) would run the call out of gas with nothing paid.
-  const left = await payoutBatch(40);
-  assert.ok(left >= 1 && left < payable, `a 40 TGas batch pays part of the ${payable}, not ${payable - left}`);
+  // 50 TGas leaves about 18 for transfers once the batch keeps 30 for itself and its callback:
+  // enough for one implicit account at its real cost, never for all nine, whatever the list order.
+  // Counted at 1 TGas each, all nine would be scheduled, and the six account creations (about
+  // 50 TGas) would run the call out of gas with nothing paid.
+  const left = await payoutBatch(50);
+  assert.ok(left >= 1 && left < payable, `a 50 TGas batch pays part of the ${payable}, not ${payable - left}`);
   const firstBatch = payable - left;
   assert.equal(await payoutBatch(300), 0, "the second batch pays the rest");
 
@@ -258,7 +259,7 @@ test("anyone pays it in batches sized to what each NEAR payment costs; a payment
   assert.equal(stateOf(round, ID("ghost")), "Failed");
   assert.deepEqual([stateOf(round, ID("kim")), stateOf(round, ID("lee"))], ["Held", "Held"]);
   console.log(
-    `  PAID in 2 batches (${firstBatch} with 40 TGas, then ${payable - firstBatch}): ana and ben got exactly their NEAR, and ` +
+    `  PAID in 2 batches (${firstBatch} with 50 TGas, then ${payable - firstBatch}): ana and ben got exactly their NEAR, and ` +
       `six implicit accounts were created holding exactly theirs; the transfer to ghost.test.near, which does not ` +
       `exist, failed and came back to Headcount, marked Failed; kim and lee are held`,
   );
@@ -285,7 +286,7 @@ test("the council pays kim and returns lee's share; the books balance and Headco
   const lee = AMOUNTS[ID("lee")]!;
   const daoGain = (await nearOf(dao.accountId))! - daoBefore;
   assert.ok(daoGain >= lee && daoGain - lee < GAS_SLACK, `the DAO got lee's ${lee} back, plus at most its gas rewards (got ${daoGain})`);
-  assert.equal(await payoutBatch(30), 0);
+  assert.equal(await payoutBatch(40), 0);
   assert.equal((await nearOf(ID("kim")))! - kimBefore, AMOUNTS[ID("kim")], "kim got exactly its amount");
 
   const round = await getRound();

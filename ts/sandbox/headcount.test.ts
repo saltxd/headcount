@@ -717,7 +717,7 @@ test("scenario 6: once the vote Trezu's template files has funded round16, anyon
   assert.ok(callback, "one callback for the whole batch");
   const ftBurnt = Math.max(...transfers.map((r) => r.burnt));
   assert.ok(ftBurnt < 10, `each ft_transfer burnt under its 10 TGas: ${ftBurnt}`);
-  assert.ok(callback.burnt < 10, `the callback burnt under its 10 TGas of static gas: ${callback.burnt}`);
+  assert.ok(callback.burnt < 20, `the callback burnt under its 20 TGas of static gas: ${callback.burnt}`);
   const second = await payoutBatch(round16, 100);
   assert.equal(second.left, 0);
 

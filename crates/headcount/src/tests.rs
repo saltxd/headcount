@@ -2046,3 +2046,119 @@ fn a_record_can_be_read_in_pages_of_the_daos_rounds() {
     );
     assert_eq!(page(2, 10).rounds_read, 0, "past the last round");
 }
+
+// --- the verdict: written by post_verdict, read by the views, never by a call that moves money -----
+
+/// A group of the same accounts as `group(names, ..)`, at every bound a verdict allows: 5 signals of
+/// 32 characters and 32 pieces of evidence of 128.
+fn largest_group(names: &[&str]) -> HeldGroup {
+    HeldGroup {
+        signals: (0..MAX_SIGNALS)
+            .map(|k| format!("{:s<w$}", format!("signal-{k}"), w = MAX_SIGNAL_LEN))
+            .collect(),
+        evidence: (0..MAX_EVIDENCE)
+            .map(|k| format!("{:e<w$}", format!("evidence-{k}"), w = MAX_EVIDENCE_LEN))
+            .collect(),
+        ..group(names, "same-funder")
+    }
+}
+
+impl Headcount {
+    /// Writes every cached change to storage, as the end of a real call does.
+    fn flush_all(&mut self) {
+        self.configs.flush();
+        self.rounds.flush();
+        self.round_counts.flush();
+        self.round_index.flush();
+        self.verdicts.flush();
+    }
+}
+
+/// The gas `call` uses when it runs on the contract as a real call finds it: read fresh from
+/// storage, with nothing cached from earlier calls. Set the call's context first.
+fn gas_of(h: &mut Headcount, call: impl FnOnce(&mut Headcount)) -> u64 {
+    h.flush_all();
+    env::state_write(h);
+    let mut fresh: Headcount = env::state_read().expect("the contract's state");
+    let before = env::used_gas().as_gas();
+    call(&mut fresh);
+    let used = env::used_gas().as_gas() - before;
+    fresh.flush_all();
+    *h = fresh;
+    used
+}
+
+/// Every call that moves money, on a round of five() whose verdict holds alice and bob as `first`
+/// and dave and erin as a small second group, with the gas each used: the token funding, a batch and
+/// its callback, a council decision and its refund's callback, then the expired group's refund and
+/// its callback. The mock keeps storage between calls, so each run takes its own `timestamp` and
+/// with it a round of its own.
+fn money_path_gas(first: HeldGroup, timestamp: u64) -> Vec<(&'static str, u64)> {
+    let mut h = configured();
+    ctx(REQUESTOR, near(100));
+    let id = h.create_round(acc(DAO), TOKEN.to_string(), five(), timestamp);
+    post(
+        &mut h,
+        &id,
+        verdict(vec![first, group(&["dave", "erin"], "shared-key")]),
+    );
+    let mut gas = Vec::new();
+    ctx(TOKEN, yocto(0));
+    let funded = gas_of(&mut h, |h| {
+        assert_eq!(h.ft_on_transfer(acc(DAO), U128(150), id.clone()), U128(0));
+    });
+    gas.push(("ft_on_transfer", funded));
+    ctx(ANYONE, yocto(0));
+    let batch = gas_of(&mut h, |h| assert_eq!(h.payout_batch(id.clone(), 5), 0));
+    gas.push(("payout_batch", batch));
+    ctx_results(results(&[OK]));
+    gas.push((
+        "on_payouts",
+        gas_of(&mut h, |h| h.on_payouts(id.clone(), vec![2])),
+    ));
+    ctx(DAO, yocto(0));
+    let decided = gas_of(&mut h, |h| {
+        h.resolve_group(id.clone(), 1, released_one("alice"))
+    });
+    gas.push(("resolve_group", decided));
+    ctx_results(results(&[OK]));
+    gas.push((
+        "on_refund",
+        gas_of(&mut h, |h| h.on_refund(id.clone(), vec![1])),
+    ));
+    ctx_at(ANYONE, yocto(0), NOW_SEC + 3 * DAY);
+    gas.push((
+        "refund_expired",
+        gas_of(&mut h, |h| h.refund_expired(id.clone())),
+    ));
+    ctx_results(results(&[OK]));
+    gas.push((
+        "on_refund",
+        gas_of(&mut h, |h| h.on_refund(id.clone(), vec![3, 4])),
+    ));
+    assert_eq!(
+        states(&h, &id),
+        st(&[
+            ("alice", Released),
+            ("bob", Refunded),
+            ("carol", Paid),
+            ("dave", Refunded),
+            ("erin", Refunded)
+        ])
+    );
+    gas
+}
+
+#[test]
+fn no_call_that_moves_money_reads_the_verdict_so_its_size_never_changes_their_gas() {
+    // A callback gets a fixed amount of gas when its caller attaches the least that succeeds. If a
+    // callback read the verdict, a large verdict could run it out of gas after its transfers left,
+    // stranding their payments in Paying or Refunding. So nothing that moves money may read it.
+    let small = money_path_gas(group(&["alice", "bob"], "same-funder"), 1);
+    let large = money_path_gas(largest_group(&["alice", "bob"]), 2);
+    assert!(
+        small.iter().all(|(_, gas)| *gas > 0),
+        "the mock counts gas: {small:?}"
+    );
+    assert_eq!(small, large);
+}
