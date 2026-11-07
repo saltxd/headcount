@@ -11,9 +11,11 @@ Built at NEAR HACKATHON. Track: Social Money.
 > Trezu itself gives that list; the DAO funds the round by vote, in NEAR or in a token; the screener
 > reads the chain and posts which recipients are linked; anyone pays the cleared recipients in
 > batches; the council releases or returns each held group by vote; and whatever nobody decides in
-> time goes back to the DAO. The screener runs against the sandbox chain (scenario 3) and,
-> read-only, against mainnet through free keyless endpoints (`screen --trezu-list`); parts marked
-> **[NOT BUILT YET]** describe the intended shape, not working code. Nothing here claims something runs unless you can run it from the steps given.
+> time goes back to the DAO. Each of the council's three votes can be filed through a Trezu custom
+> proposal template (`templates/`), and `npm run demo` tells one round's whole story in about
+> 15 seconds. The screener runs against the sandbox chain (scenario 3) and, read-only, against
+> mainnet through free keyless endpoints (`screen --trezu-list`). Nothing here claims something runs
+> unless you can run it from the steps given.
 
 ---
 
@@ -109,23 +111,146 @@ forfeited.
 
 **You need:** Node 22.18 or newer, git, and rustup. The repository's `rust-toolchain.toml` installs
 Rust 1.86 with the wasm target on first use. macOS on Apple silicon or Linux x86-64, the platforms
-NEAR publishes a sandbox for. The first run needs network access to fetch Sputnik's source from
-GitHub, Rust crates, and the sandbox binary from NEAR's release bucket. No NEAR account, keys or
-funds.
+NEAR publishes a sandbox for. The first run needs network access for Rust crates, the sandbox binary
+from NEAR's release bucket, and one keyless view call that reads the Sputnik DAO bytes from NEAR's
+mainnet factory. No NEAR account, keys or funds.
 
 ```bash
 git clone https://github.com/saltxd/headcount
 cd headcount
 npm ci
-npm test
-cargo test
+npm test        # 110 tests: the unit tests, then each sandbox file's scenarios, one story line each
+npm run demo    # one reward round, start to finish, told step by step
+cargo test      # the contract's 108 unit tests
 ```
 
-`npm test` first fetches Sputnik DAO v3.2 (and builds its test token; `npm run build:sputnik`) and the Headcount
-contract (`npm run build:contract`), puts neard 2.13.4 in place, then runs the tests. The first run
-takes a few minutes; most of it is compiling.
+`npm test` and `npm run demo` first run `npm run build`: fetch the factory's Sputnik DAO v3.2 bytes
+(`npm run fetch:sputnik`), build the Headcount contract and Sputnik's test token
+(`npm run build:contracts`), and put neard 2.13.4 in place. From a fresh clone on an Apple M4 Pro
+(12 cores), `npm ci && npm test` took 68 s on Node 26.13 and on Node 22.18, the build included (it
+was 329 s before the sandbox's block time changed); after that, `npm run demo` takes about 15 s and
+`cargo test` about 15 s.
 
-**What you should see.** `npm test` prints the story, then `pass 30`, `fail 0`. The Headcount part:
+### What `npm run demo` prints
+
+Implicit account ids, keys, hashes and the round id change from run to run; nothing else does.
+
+```
+Headcount: one reward round, start to finish, on a local NEAR sandbox
+Every account below is a throwaway on a sandbox chain running on this machine:
+no real network, keys or funds.
+
+1. A treasury, set up the way Trezu sets one up
+   dao.test.near runs Sputnik DAO v3.2, the exact code NEAR's mainnet DAO factory deploys
+   (code hash DtHZA1mU..., the factory's own). It has the three roles Trezu gives a treasury:
+     Requestor  treasurer.test.near                  files payment proposals
+     Approver   approver1.test.near to approver4     any 2 of the 4 pass a payment
+     Admin      admin.test.near                      changes the rules
+   Headcount is a separate contract, headcount.test.near. It holds no role in the DAO.
+   The DAO holds 1,000,000 of token.test.near, a token with 6 decimals standing in for USDC.
+
+2. The DAO names its screener, by vote
+   Why: only an account the DAO itself picked may say which recipients are linked.
+   The Requestor fills Trezu's "Name the screener" template, which files one proposal:
+     headcount.test.near configure: screener screener.test.near, verdict and hold windows 10 minutes
+   Approver 1 votes yes: the proposal is still in progress, and nothing has changed.
+   Approver 2 votes yes: proposal 0 is approved, and the DAO's call ran in that same transaction.
+   From now on, only screener.test.near can post a verdict on this DAO's rounds.
+
+3. What the chain already records
+   Sixteen accounts took part in a campaign. Before anyone asks for money, NEAR already records
+   how each account came to exist, which keys control it and where it sent funds. Planted here,
+   and not told to the screener:
+     farm A  quinn.test.near funded 5 brand-new implicit accounts
+     farm B  kai.test.near, lena.test.near and omar.test.near were created with one shared key;
+             omar later swapped it for a key of its own
+     farm C  nia.test.near and ravi.test.near: one sent the other 1 NEAR
+     farm D  sol.test.near and tara.test.near both sent tokens to wes.test.near
+     and 4 independent accounts that only look linked: 2 of the 60 accounts wallet-sponsor.test.near
+     funded, which all hold one wallet recovery key and deposit at exchange.test.near; and uma and vik,
+     who use that exchange too, both donated to the DAO, and one tipped the other 0.001 NEAR.
+
+4. The Requestor turns the payout list into a round
+   The list is the CSV Trezu's bulk payments take: 16 lines of "account, amount".
+   create_round returns a53b451bd1dfbd43...: Trezu's own list id for this list, with the DAO as
+   submitter, so the treasurer screens exactly the list they would hand Trezu. Total: 114.275001 tokens.
+   Nothing can be paid before the screen.
+
+5. The screener reads the chain and posts its verdict
+   It reads every block of the sandbox (a sandbox has no indexer): blocks 0 to 41,
+   226 transactions, in 35 ms. For each recipient it asks who created and funded it,
+   which keys control it and where it sent money, and links two recipients only through an account
+   that is not a service.
+     HELD   group 1: created by the same account, quinn.test.near (evidence: 5 transactions)
+              3e93ca93..., 5a6a7073..., 668790ed..., ada1a0f4... and fbb7f325...
+     HELD   group 2: share a full-access key, ed25519:J42fg4dw... (evidence: the key itself)
+              kai.test.near, lena.test.near and omar.test.near
+     HELD   group 3: one sent the other funds (evidence: 1 transaction)
+              nia.test.near and ravi.test.near
+     HELD   group 4: sent funds to the same account, wes.test.near (evidence: 2 transactions)
+              sol.test.near and tara.test.near
+     CLEAR  5904097e..., c84b6c1e..., uma.test.near and vik.test.near
+     Seen, but not linked, because each runs through a service:
+       wallet-sponsor.test.near: created more than 20 accounts
+       the key ed25519:8zwf6Ym7...: held by more than 20 accounts
+       exchange.test.near: received funds from more than 20 accounts
+       dao.test.near: this round's DAO
+   The full report is out/demo/report.md; the verdict carries the SHA-256 of report.json
+   (bb0aa39a060b1e00...). post_verdict: 12 of 16 recipients held, 4 cleared.
+   The contract would refuse a second verdict, a verdict from any other account, or one naming an
+   account that is not on the list.
+
+6. The council funds the round, by vote
+   The Requestor fills Trezu's "Fund a screened round (USDC)" template: the token's ft_transfer_call to
+   Headcount for the round's exact total, with the round id as its message, the same call Trezu's bulk
+   payments file. Two approvals (proposal 1). Headcount keeps the tokens only because the token, the
+   sender (the DAO) and the amount all match. It now holds 114.275001 tokens, for this round only.
+
+7. Anyone pays the cleared recipients
+   (Each recipient first registers with the token, as every NEP-141 recipient must.)
+   alice.test.near, who holds no role anywhere, calls payout_batch: the 4 cleared recipients get
+   exactly their amounts (33.15 tokens). The 12 held get nothing.
+   alice.test.near tries again: refused, "its 12 held recipient(s) wait for a council vote".
+
+8. The council decides one held group
+   nia.test.near and ravi.test.near turn out to be a couple who share a household.
+   The Requestor fills Trezu's "Decide a held group" template: group 3, "ReleaseAll". Two approvals
+   (proposal 2). The next batch pays them both, exactly (13.25 tokens).
+
+9. Nobody decides the other three groups
+   The 10-minute hold window passes (the sandbox clock is moved forward rather than waited out).
+   Now anyone may call refund_expired. It sends the 10 remaining held shares, 67.875001 tokens,
+   back to dao.test.near: the DAO's balance rises by exactly that.
+
+10. The books
+   Funded 114.275001 = paid 46.4 (6 recipients) + returned 67.875001 (10 recipients).
+   Headcount holds 0 tokens. get_round keeps each payment's state and each group's outcome on chain:
+     group 1 Expired, group 2 Expired, group 3 ReleasedAll, group 4 Expired.
+
+Done in 11 s. Every step above was checked as it ran: a mismatch would have
+stopped the demo with an error.
+```
+
+### What `npm test` prints
+
+`npm test` ends with `pass 110` and `fail 0`. Node runs the test files side by side and prints each
+file's lines together. The sandbox files print one story line per scenario:
+
+| Tests | What they show |
+|---|---|
+| `ts/sandbox/dao.test.ts` (4) | The DAO alone: it runs the factory's exact v3.2 bytes; a `FunctionCall` proposal passes on the second Approver vote and runs in that same transaction; a vote must carry the stored proposal kind back (`ERR_WRONG_KIND`); a Requestor cannot approve, and neither an Approver nor an Admin can file a payment |
+| `ts/sandbox/demo.test.ts` (1) | `npm run demo` with its narration collected instead of printed: every step checks out and the books close |
+| `ts/sandbox/headcount.test.ts` (20) | The design's scenarios 1, 2 and 4 to 13 against the real DAO, on verdicts written by hand (lines below). Each refused funding checks Headcount's own logged reason, not only the balances: a contract with no `ft_on_transfer` at all would also see tokens bounce. Every payout and refund is checked against the receiving account's balance, to the unit, and scenario 13 checks every round `get_rounds` lists |
+| `ts/sandbox/near-payout.test.ts` (4) | A round paid in NEAR: funded by a vote that attaches exactly its total; two named accounts paid exactly; six implicit accounts created by their own payments; a payment to an account that does not exist fails and goes back to the DAO to the yoctoNEAR; the council pays one held account and returns the other's share. The first batch gets gas for one account creation at its real cost, not for all nine |
+| `ts/sandbox/screener.test.ts` (2) | Scenario 3: the screener scans every block of the sandbox, holds exactly the four planted farms, clears every decoy, and posts its verdict |
+| `ts/sandbox/templates.test.ts` (3) | The three Trezu templates: each proposal filed exactly as Trezu's own engine built it, and what each vote did |
+| `ts/test/templates.test.ts`, `templates-cli.test.ts` (9) | The manifests against Trezu's format, their proposals against Trezu's own output to the byte, and `npm run templates` |
+| `ts/test/list-id.test.ts` (7) | The TypeScript list id against Trezu's own ids, and the CSV parser: Trezu's two columns, amounts in whole tokens, refusing rather than rounding an amount with more decimals than the token has |
+| `ts/test/screener.test.ts`, `block-scan.test.ts` (20) | The screen's rule on in-memory chains, and the sandbox block scan on hand-written transactions |
+| `ts/test/fastnear.test.ts`, `mainnet-screen.test.ts`, `paced-fetch.test.ts`, `screener-cli.test.ts`, `trezu-list.test.ts` (40) | Mainnet mode against a pretend FastNEAR: the reader, the pacing, the CLI and board, and Trezu's `view_list` |
+
+<details>
+<summary>The story lines <code>ts/sandbox/headcount.test.ts</code> prints</summary>
 
 ```
   dao.test.near: Sputnik 2.3.1 with Trezu roles; Headcount at headcount.test.near, which holds no role in the DAO
@@ -149,10 +274,10 @@ takes a few minutes; most of it is compiling.
 ✔ scenario 12: a NEAR deposit that is not exactly the DAO funding a NEAR round is refused
   FUNDED by vote: round16 with 114275001 of token.test.near, and the NEAR round with exactly 1 NEAR
 ✔ the right doors fund a round: the vote Trezu's template files (ft_transfer_call), and fund_round with the exact total
-  Transfer{msg}, deciding vote 250 TGas: funded; ft_on_transfer was given 114.51 TGas and the receipt burnt 2.31 TGas
-  Transfer{msg}, deciding vote 30 TGas: funded; ft_on_transfer was given 4.51 TGas and the receipt burnt 2.31 TGas
+  Transfer{msg}, deciding vote 250 TGas: funded; ft_on_transfer was given 114.52 TGas and the receipt burnt 2.31 TGas
+  Transfer{msg}, deciding vote 30 TGas: funded; ft_on_transfer was given 4.52 TGas and the receipt burnt 2.31 TGas
 ✔ a Sputnik Transfer proposal with msg also funds a round: Sputnik's 10 TGas is a floor, not a cap
-  PAID by an outsider in 2 batches (6 with 100 TGas, then 5): 10 cleared recipients got exactly their amounts; r16.test.near is not registered with the token, so its transfer failed and is kept for the DAO; the 5 held got nothing. Each ft_transfer burnt 1.75 TGas at most, the callback 1.90
+  PAID by an outsider in 2 batches (6 with 100 TGas, then 5): 10 cleared recipients got exactly their amounts; r16.test.near is not registered with the token, so its transfer failed and is kept for the DAO; the 5 held got nothing. Each ft_transfer burnt 1.74 TGas at most, the callback 1.90
 ✔ scenario 6: once the vote Trezu's template files has funded round16, anyone pays its cleared recipients in batches; held ones are kept
   RETURNED: r16.test.near's failed 2250000 went back to dao.test.near; nothing else moved
 ✔ a payment that failed can only go back to the DAO: anyone sends it back at once
@@ -175,17 +300,13 @@ takes a few minutes; most of it is compiling.
 (`2.3.1` is the `sputnikdao2` crate version; the factory calls this release v3.2. Gas figures move
 by a few hundredths of a TGas from run to run, and the gas rewards in the last line by a little more.)
 
+</details>
+
 The scenario numbers are the design's. Every scenario runs. Scenario 3 is the screener reading the
 sandbox chain and posting its own verdict; the others use verdicts written by hand. To run scenarios 9
 and 10 past a deadline in seconds, the DAO first votes its windows down to 60 seconds, and the sandbox
 clock is moved forward with empty blocks rather than waited out; round16 keeps the 2-day windows it
 was created with.
-
-| Tests | What they show |
-|---|---|
-| `ts/sandbox/dao.test.ts` (3) | The DAO alone: a `FunctionCall` proposal passes on the second Approver vote and runs in that same transaction; a vote must carry the stored proposal kind back (`ERR_WRONG_KIND`); a Requestor cannot approve and neither an Approver nor an Admin can file a payment |
-| `ts/sandbox/headcount.test.ts` (20) | The scenarios above, against the real DAO. Each refused funding checks Headcount's own logged reason, not only the balances: a contract with no `ft_on_transfer` at all would also see tokens bounce. Every payout and refund is checked against the receiving account's balance, to the unit, and scenario 13 checks every round `get_rounds` lists |
-| `ts/test/list-id.test.ts` (7) | The TypeScript list id against Trezu's own ids, and the CSV parser: Trezu's two columns, amounts in whole tokens, refusing rather than rounding an amount with more decimals than the token has |
 
 `cargo test` runs the contract's 108 unit tests on near-sdk's mocked VM: who may configure, the list
 checks, storage charged to the caller and the rest of the deposit returned, every funding refusal,
@@ -200,12 +321,14 @@ Set `NEAR_PRINT_LOGS=1` to see every receipt log and refusal the sandbox prints.
 
 - **Sputnik DAO v3.2, the factory's own bytes.** `sputnik-dao.near`, the mainnet factory, reports
   default version `[3, 2]` with code hash `DtHZA1mUmGYeScEaUoUZYQGGFHSMpnjMCvkr5U9hJXuF`.
-  `scripts/build-sputnik.mjs` reads those bytes with one keyless view call (`get_code`) and refuses
+  `scripts/fetch-sputnik.mjs` reads those bytes with one keyless view call (`get_code`) and refuses
   them unless they hash to that value; a sandbox test asserts the deployed DAO's code hash equals it.
   The factory maps the hash to commit `2b0f34a3` of
-  [near-daos/sputnik-dao-contract](https://github.com/near-daos/sputnik-dao-contract) (MIT); the
-  test token is built from that commit with its own `rust-toolchain.toml` and `Cargo.lock`
-  (`--locked`) and lowered for NEAR's VM. The first run needs network access for the fetch.
+  [near-daos/sputnik-dao-contract](https://github.com/near-daos/sputnik-dao-contract) (MIT). The
+  sandbox's round token is that commit's NEP-141 test token: its source is in `crates/test-token`,
+  copied unmodified with Sputnik's license beside it, and it builds in this workspace with the same
+  Rust, near-sdk and release profile, in a cargo build of its own so its near-sdk features never
+  reach Headcount's. The first run needs network access for the fetch.
 - **Trezu's roles.** `trezuPolicy` in `ts/sandbox/harness.ts` writes the policy Trezu's backend
   writes when it creates a treasury (`build_policy` in
   [NEAR-DevHub/trezu](https://github.com/NEAR-DevHub/trezu), `nt-be/src/handlers/treasury/create.rs`):
@@ -215,6 +338,51 @@ Set `NEAR_PRINT_LOGS=1` to see every receipt log and refusal the sandbox prints.
   link Sputnik v3.2 (`UnknownImportError` for `promise_batch_action_deploy_global_contract`, from
   near-sdk's `global-contracts` feature). `scripts/ensure-sandbox.mjs` fetches 2.13.4 from NEAR's
   release bucket and checks the tarball's SHA-256 before using it.
+- **A block every 100 ms.** `ts/sandbox/sandbox.ts` starts each sandbox with neard's minimum block
+  time at 100 ms instead of its default 600 ms, and refuses a sandbox whose `client_config` does
+  not report it. A sandbox call waits for a few blocks, so this is most of how long the tests take
+  (on a warm build the sandbox files went from 304 s to 44 s). Gas, fees and every protocol rule
+  come from the genesis and protocol version, not from this setting: the gas figures in the story
+  lines are the same either way. Moving the clock forward costs about 1 s of chain time per block.
+
+### Trezu templates
+
+Trezu lets a treasury add **custom proposal templates**: a JSON manifest that Trezu turns into a
+form, which files one Sputnik `FunctionCall` proposal. `templates/` holds one for each vote
+Headcount asks of a council:
+
+| Template | What it files | What the form asks |
+|---|---|---|
+| "Name the screener" (`headcount-name-screener.json`) | `configure` on Headcount with 0.01 NEAR for storage (the rest comes back), 30 TGas | the treasury's own account, the screener, the verdict and hold windows |
+| "Fund a screened round (USDC)" (`headcount-fund-round-usdc.json`) | the token's `ft_transfer_call` to Headcount with the round id as `msg`, 1 yoctoNEAR, 100 TGas: the call Trezu's bulk payments already file | the round id, the round's total |
+| "Decide a held group" (`headcount-resolve-group.json`) | `resolve_group` on Headcount, 60 TGas | the round id, the group number, the decision: `"ReleaseAll"`, `"Refund"` or `{"ReleaseOne": {"account_id": "..."}}` |
+
+Trezu's hosted app needs a mainnet DAO, so the templates are checked this way instead:
+- **Trezu's own code accepts them and builds the proposals.** Run outside this repository at
+  NEAR-DevHub/trezu `a6aaaf67`, Trezu's `parseManifest` accepted all three manifests and its
+  `buildTemplateProposal` built six proposals from sample form values;
+  `fixtures/trezu-template-proposals.json` records those outputs and each manifest's hash.
+  `ts/src/templates.ts` reproduces every one to the byte (`ts/test/templates.test.ts`), including
+  how a form value becomes typed JSON: a lone `{{group}}` of a `number` field reaches the contract
+  as a number, a `json` field's decision as an object, and amounts stay digit strings. No Trezu code
+  is in this repository (Trezu publishes no license).
+- **The sandbox files exactly those proposals.** `ts/sandbox/templates.test.ts` has the Requestor
+  file each proposal Trezu built, kind and description, on the real Sputnik v3.2 with Trezu's roles,
+  two Approvers pass it, and the test checks what the call did: the screener is named, the round is
+  funded with its exact total, and one held group pays one account and returns the other's share.
+  `npm run demo` files all three for its round.
+
+The manifests in `templates/` name the sandbox's accounts. For a real deployment, write copies
+pointed at it, then paste each one into Trezu (the DAO, Custom, New template, Code tab; authoring
+a template needs the DAO's ChangePolicy permission). Both accounts are required; nothing is assumed:
+
+```
+npm run templates -- --headcount <Headcount contract> --token <the round's token, for example USDC's>
+```
+
+A NEAR round cannot be a template: Trezu fixes a template's deposit, and a NEAR round's deposit is
+its total. The DAO funds it with a `FunctionCall` proposal of its own that calls `fund_round` with
+exactly the total attached, as `ts/sandbox/near-payout.test.ts` does.
 
 ### Mainnet, read-only (optional)
 
@@ -274,8 +442,9 @@ service or key, and needs none to run.
 
 ### Libraries, templates and prior art
 
-- **Sputnik DAO v3.2** (MIT), near-daos/sputnik-dao-contract at `2b0f34a3`: the DAO contract and
-  its NEP-141 test token, built from source and used unmodified in the sandbox
+- **Sputnik DAO v3.2** (MIT), near-daos/sputnik-dao-contract at `2b0f34a3`: the DAO contract, as the
+  exact bytes the mainnet factory stores (fetched, hash checked), and its NEP-141 test token, built
+  from that commit; both used unmodified in the sandbox
 - **near-sdk** `=5.24.1` for the contract, the version Sputnik v3.2 locks
 - **near-workspaces** `5.0.0` and **near-api-js** `5.1.1`, dev-only, for the sandbox tests
 - **near-sandbox**: neard `2.13.4`, NEAR's official build
@@ -283,8 +452,11 @@ service or key, and needs none to run.
 - **Trezu** (NEAR DevHub): we read how it configures a treasury's roles and mirror that policy, and
   Headcount uses its list-id formula. To check that formula we ran Trezu's own `generateListId`
   (and its backend's `compute_list_hash`) on synthetic lists, outside this repository; only the
-  resulting ids are here, in `fixtures/trezu-list-ids.json`. No Trezu code is copied
-- **No project template was used.** The repository layout is our own
+  resulting ids are here, in `fixtures/trezu-list-ids.json`. Our three custom proposal templates
+  follow Trezu's documented manifest format; to check them we ran Trezu's own `parseManifest` and
+  `buildTemplateProposal` outside this repository, and only their outputs are here, in
+  `fixtures/trezu-template-proposals.json`. No Trezu code is copied
+- **No starter project or scaffold was used.** The repository layout is our own
 - **Prior art:** nada.bot (used by Potlock's funding rounds) and I-Am-Human (used for NDC
   elections) already defend NEAR communities against one person counting many times. Both ask each
   person to verify themselves; Headcount asks the recipients nothing and reads the chain instead
@@ -306,18 +478,30 @@ crates/headcount/src/list_id.rs  Trezu's list id in Rust
 crates/headcount/src/tests.rs    the contract's unit tests (cargo test)
 fixtures/trezu-list-ids.json     ids Trezu's own generateListId computed for synthetic lists
 fixtures/round-16.csv            the sandbox's 16-recipient list, in Trezu's CSV format
-scripts/build-sputnik.mjs        fetch Sputnik DAO v3.2 at 2b0f34a3, build it into out/
-scripts/build-contract.mjs       build the Headcount contract into out/
+fixtures/trezu-template-proposals.json  what Trezu's own engine built from our three templates
+templates/                       the three Trezu custom proposal templates (sandbox accounts)
+crates/test-token/               Sputnik v3.2's NEP-141 test token (MIT, unmodified), the sandbox's round token
+scripts/fetch-sputnik.mjs        fetch the factory's Sputnik v3.2 bytes (hash checked) into out/
+scripts/build-contracts.mjs      build Headcount and the test token into out/, one cargo build each
 scripts/wasm.mjs                 the wasm lowering and code hash both build scripts use
 scripts/ensure-sandbox.mjs       put neard 2.13.4 where near-workspaces looks (tarball SHA-256 checked)
 ts/src/list-id.ts                Trezu's list id and CSV parser in TypeScript
 ts/test/list-id.test.ts          their tests
+ts/src/templates.ts              Trezu's template format: check a manifest, build its proposal, retarget it
+ts/src/templates-cli.ts          npm run templates: the manifests pointed at a real deployment
+ts/demo/                         npm run demo: story.ts runs and checks the story, demo.ts prints it
 ts/screener/                     the screener: rule, report, the sandbox block scan, and mainnet mode
                                  (fastnear.ts reader, paced-fetch.ts pacing, trezu-list.ts, cli.ts, board.ts)
 ts/test/fastnear*.test.ts        the mainnet reader on a pretend FastNEAR; mainnet-screen.test.ts runs the screen on it
 fixtures/fastnear/               one recorded FastNEAR response (a DAO's creation), call arguments removed
+ts/sandbox/sandbox.ts            starts each sandbox: a block every 100 ms, removed when it stops
 ts/sandbox/dao.test.ts           the DAO alone in the sandbox
 ts/sandbox/headcount.test.ts     Headcount next to the DAO: the design's scenarios
+ts/sandbox/near-payout.test.ts   a round paid in NEAR, start to finish
+ts/sandbox/screener.test.ts      scenario 3: the screener reads the chain and holds the planted farms
+ts/sandbox/templates.test.ts     the three Trezu templates, filed as Trezu files them
+ts/sandbox/demo.test.ts          npm run demo, run inside npm test
+ts/sandbox/world.ts, send.ts     the planted world, and a sender for many transactions at once
 ts/sandbox/harness.ts            Trezu's policy, proposal shapes, test helpers
 rust-toolchain.toml              Rust 1.86 with the wasm target, the toolchain Sputnik v3.2 pins
 .nvmrc                           Node 22.18.0, the oldest Node that runs the TypeScript without a flag
