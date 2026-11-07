@@ -80,6 +80,9 @@ which sends back a funded round that got no verdict within its verdict window, e
 council left undecided past the hold window (counted from the later of the verdict and the funding),
 and any failed payment. Each payment's state and each group's outcome stay on chain (`get_round`,
 `get_rounds`), and a round is settled when what was paid plus what went back equals what was funded.
+`get_rounds` lists every round under a DAO, including unfunded rounds anyone may add, each with its
+verdict; the caller picks the page size, so page in small steps when verdicts are large, since a
+view call has a gas limit.
 
 **No payment is left in flight.** Only the callback learns whether a transfer arrived, so it must
 always have the gas to finish. Each paying, deciding or refunding call keeps 20 TGas for its
@@ -105,7 +108,8 @@ anything, so a round in any token the DAO did not list cannot be created at all,
 round counts nowhere. What a record can prove: in rounds this DAO paid for, with tokens it chose,
 its own named screener held the account so many times, and so many payments arrived or went back.
 What it cannot: anything about the account with another DAO; whether the screener was right; or
-anything at all if the DAO itself listed a token that lies about senders. Records are kept per DAO
+anything at all if the DAO itself listed a token that lies about senders (delisting it later stops
+new rounds in it, not the funding of a round created while it was listed). Records are kept per DAO
 because any account can configure itself as a DAO and screen its own rounds, so check that the DAO
 is the one you mean. It is a view computed from the stored rounds, so it costs no storage and no
 payout has to update it.
@@ -462,7 +466,7 @@ exactly the total attached, as `ts/sandbox/near-payout.test.ts` does.
 ### Mainnet, read-only (optional)
 
 The judge's run never writes to mainnet: its one mainnet read is the keyless fetch of the Sputnik
-factory's bytes at build time, cached in `out/` after the first run. For a treasurer who wants to try the screen on a real list,
+factory's bytes at build time, cached in `target/sputnik/` after the first run. For a treasurer who wants to try the screen on a real list,
 the same screen can read mainnet through FastNEAR's keyless public endpoints. It sends no
 transaction and holds no key.
 
