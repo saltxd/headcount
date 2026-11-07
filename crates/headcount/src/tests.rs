@@ -1248,6 +1248,47 @@ fn a_batch_pays_only_as_many_as_its_gas_covers() {
     assert_eq!(ft_transfers().len(), 2);
 }
 
+/// A NEAR-implicit account: 64 hex characters, created by the first NEAR transfer it receives.
+const IMPLICIT: &str = "00000000000000000000000000000000000000000000000000000000000000a1";
+
+#[test]
+fn a_near_payout_to_an_implicit_account_is_counted_at_what_creating_it_costs() {
+    // NEAR charges every NEAR transfer to an implicit account the fees of creating it and adding
+    // its key (about 8.4 TGas on protocol 86), whether or not it exists yet. The implicit account
+    // sorts first; the room left after it is less than one more payment, so the batch stops there.
+    let mut h = configured();
+    let list = vec![
+        pay("alice.test.near", 20),
+        pay(IMPLICIT, 10),
+        pay("bob.test.near", 30),
+    ];
+    let id = create(&mut h, NATIVE, list);
+    post(&mut h, &id, verdict(vec![]));
+    fund(&mut h, &id);
+    let base = GAS_RESERVE.as_gas() + GAS_FOR_CALLBACK.as_gas();
+    let room = GAS_PER_NEAR_PAYMENT_TO_IMPLICIT.as_gas() + GAS_PER_NEAR_PAYMENT.as_gas() / 2;
+    ctx_gas(ANYONE, Gas::from_gas(base + room));
+    assert_eq!(h.payout_batch(id, 3), 2, "only the implicit account fits");
+    assert_eq!(transfers(), vec![(acc(IMPLICIT), 10)]);
+}
+
+#[test]
+fn a_near_payout_to_a_named_account_is_counted_as_a_plain_transfer() {
+    let (mut h, id) = screened_and_funded(NATIVE, vec![]);
+    let base = GAS_RESERVE.as_gas() + GAS_FOR_CALLBACK.as_gas();
+    let room = GAS_PER_NEAR_PAYMENT.as_gas() * 5 / 2;
+    ctx_gas(ANYONE, Gas::from_gas(base + room));
+    assert_eq!(
+        h.payout_batch(id, 5),
+        3,
+        "two named accounts fit, three left"
+    );
+    assert_eq!(
+        transfers(),
+        vec![(acc("alice.test.near"), 10), (acc("bob.test.near"), 20)]
+    );
+}
+
 #[test]
 #[should_panic(expected = "attach more gas")]
 fn a_batch_without_gas_for_one_payment_is_refused() {

@@ -57,8 +57,10 @@ DAO's named screener can post a verdict, once, within the round's window, about 
 
 **Paying, deciding, returning.** Anyone can call `payout_batch`: it pays only recipients the verdict
 cleared or the council released, in list order, as many as the attached gas covers (100 TGas paid six
-token transfers in the sandbox; each `ft_transfer` burnt at most 1.75 TGas of the 10 it gets). One
-callback per batch records each transfer; one that fails, for example to a recipient who never
+token transfers in the sandbox; each `ft_transfer` burnt at most 1.75 TGas of the 10 it gets). A
+NEAR payment to an implicit account counts for 10 TGas: NEAR charges every transfer to one as an
+account creation, about 8.4 TGas in fees, whether or not the account exists yet. One callback per
+batch records each transfer; one that fails, for example to a recipient who never
 registered with the token, is marked `Failed`, and its amount can then only go back to the DAO. Only
 the DAO itself can call `resolve_group`, so a held group takes a council vote: release all of it,
 release one account and return the rest, or return all of it. Anyone can call `refund_expired`,
@@ -185,7 +187,7 @@ was created with.
 | `ts/sandbox/headcount.test.ts` (20) | The scenarios above, against the real DAO. Each refused funding checks Headcount's own logged reason, not only the balances: a contract with no `ft_on_transfer` at all would also see tokens bounce. Every payout and refund is checked against the receiving account's balance, to the unit, and scenario 13 checks every round `get_rounds` lists |
 | `ts/test/list-id.test.ts` (7) | The TypeScript list id against Trezu's own ids, and the CSV parser: Trezu's two columns, amounts in whole tokens, refusing rather than rounding an amount with more decimals than the token has |
 
-`cargo test` runs the contract's 106 unit tests on near-sdk's mocked VM: who may configure, the list
+`cargo test` runs the contract's 108 unit tests on near-sdk's mocked VM: who may configure, the list
 checks, storage charged to the caller and the rest of the deposit returned, every funding refusal,
 every verdict check, the three Trezu list-id vectors, and for payouts: batches in list order and
 within their gas, each transfer recorded paid or failed, nothing paid twice or while held, only the

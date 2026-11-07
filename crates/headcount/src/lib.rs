@@ -51,10 +51,14 @@ pub const MAX_EVIDENCE_LEN: usize = 128;
 /// Gas each `ft_transfer` gets: the static gas Sputnik DAO gives its own token transfers.
 pub const GAS_FOR_FT_TRANSFER: Gas = Gas::from_tgas(10);
 
-/// What one payment adds to a batch: its transfer receipt's fees (about 1.3 TGas on protocol 86),
-/// the `ft_transfer`'s own gas for a token, and a margin.
+/// What one payment adds to a batch, with a margin, on protocol 86's fees. A token payment: the
+/// `ft_transfer`'s 10 TGas and its receipt's fees (about 1.3 TGas).
 pub const GAS_PER_FT_PAYMENT: Gas = Gas::from_tgas(12);
+/// A NEAR payment to a named account: a plain transfer receipt, about 0.5 TGas in fees.
 pub const GAS_PER_NEAR_PAYMENT: Gas = Gas::from_tgas(1);
+/// A NEAR payment to an implicit account (64 hex characters, or `0x` and 40): NEAR charges every
+/// transfer to one the fees of creating it, whether or not it exists yet, about 8.4 TGas in all.
+pub const GAS_PER_NEAR_PAYMENT_TO_IMPLICIT: Gas = Gas::from_tgas(10);
 
 /// Static gas for the callback that records how a batch of transfers went. It also gets every
 /// unit of gas the calling method leaves unused.
@@ -665,17 +669,23 @@ impl Headcount {
                 )
             });
         }
-        let per_payment = gas_per_payment(&round.token_id);
-        let n = payable
-            .len()
-            .min(limit as usize)
-            .min(payments_gas_covers(per_payment));
+        // In list order, as many as `limit` allows and the gas covers, each at what it costs to send.
+        let mut budget = spare_gas();
+        let mut n = 0;
+        for &i in payable.iter().take(limit as usize) {
+            let cost = payment_gas(&round.token_id, &round.payments[i].recipient).as_gas();
+            if cost > budget {
+                break;
+            }
+            budget -= cost;
+            n += 1;
+        }
         require!(
             n >= 1,
             format!(
-                "attach more gas: a batch keeps {} TGas for itself and one payment needs {} TGas more",
+                "attach more gas: a batch keeps {} TGas for itself and the next payment needs {} TGas more",
                 (GAS_RESERVE.as_gas() + GAS_FOR_CALLBACK.as_gas()) / 1_000_000_000_000,
-                per_payment.as_tgas()
+                payment_gas(&round.token_id, &round.payments[payable[0]].recipient).as_tgas()
             )
         );
 
@@ -963,12 +973,12 @@ impl Headcount {
     /// Sends the amounts at `positions` back to the round's DAO in one transfer, marks them
     /// `Refunding`, and has `on_refund` record how it went. Returns the amount sent.
     fn send_back(round: &mut Round, round_id: &str, positions: Vec<u32>) -> u128 {
-        let per_payment = gas_per_payment(&round.token_id);
+        let cost = payment_gas(&round.token_id, &round.dao_id);
         require!(
-            payments_gas_covers(per_payment) >= 1,
+            spare_gas() >= cost.as_gas(),
             format!(
                 "attach more gas: sending money back to the DAO needs {} TGas more than this call has left",
-                (GAS_RESERVE.as_gas() + GAS_FOR_CALLBACK.as_gas() + per_payment.as_gas())
+                (GAS_RESERVE.as_gas() + GAS_FOR_CALLBACK.as_gas() + cost.as_gas())
                     / 1_000_000_000_000
             )
         );
@@ -1130,22 +1140,26 @@ fn transfer(token_id: &str, receiver: &AccountId, amount: u128, memo: &str) -> P
     )
 }
 
-fn gas_per_payment(token_id: &str) -> Gas {
-    if token_id == NATIVE {
-        GAS_PER_NEAR_PAYMENT
-    } else {
+/// What one payment to `recipient` adds to a batch: a token transfer, a NEAR transfer to a named
+/// account, or a NEAR transfer to any other kind of account, which NEAR charges as an account
+/// creation.
+fn payment_gas(token_id: &str, recipient: &AccountId) -> Gas {
+    if token_id != NATIVE {
         GAS_PER_FT_PAYMENT
+    } else if recipient.get_account_type().is_implicit() {
+        GAS_PER_NEAR_PAYMENT_TO_IMPLICIT
+    } else {
+        GAS_PER_NEAR_PAYMENT
     }
 }
 
-/// How many payments of `per_payment` gas the gas this call has left covers, after keeping
-/// `GAS_RESERVE` for its own remaining work and `GAS_FOR_CALLBACK` for the callback.
-fn payments_gas_covers(per_payment: Gas) -> usize {
-    let left = env::prepaid_gas()
+/// The gas this call has left for transfers, after keeping `GAS_RESERVE` for its own remaining
+/// work and `GAS_FOR_CALLBACK` for the callback.
+fn spare_gas() -> u64 {
+    env::prepaid_gas()
         .as_gas()
-        .saturating_sub(env::used_gas().as_gas());
-    let spare = left.saturating_sub(GAS_RESERVE.as_gas() + GAS_FOR_CALLBACK.as_gas());
-    (spare / per_payment.as_gas()) as usize
+        .saturating_sub(env::used_gas().as_gas())
+        .saturating_sub(GAS_RESERVE.as_gas() + GAS_FOR_CALLBACK.as_gas())
 }
 
 /// Whether the `k`-th transfer a callback waited on went through. Any successful result counts,
