@@ -1,0 +1,179 @@
+{
+  "source": {
+    "what": "Each proposal below was built by Trezu itself, not by Headcount: buildTemplateProposal from nt-fe/features/proposal-templates/build-proposal.ts, run on the manifests in templates/ and the form values given. Each manifest's verdict is Trezu's own parseManifest (nt-fe/features/proposal-templates/manifest.ts, zod 4.4.3 as Trezu's bun.lock pins it).",
+    "repository": "https://github.com/NEAR-DevHub/trezu",
+    "commit": "a6aaaf6742099069634a25fb20c4287a2852dd62",
+    "commit_date": "2026-11-06",
+    "run": "2026-11-07 UTC, Node v26.13.0, outside this repository; only import specifiers were changed",
+    "license_note": "Trezu publishes no license, so none of its code is in this repository: only these outputs, computed from our own manifests and values.",
+    "manifest_sha256": "SHA-256 of the manifest's JSON with no whitespace (JSON.stringify of the parsed file), so an edited manifest no longer matches its recorded verdict and vectors",
+    "sandbox_vectors": "Vectors whose 'what' starts with 'sandbox:' are the ones ts/sandbox/templates.test.ts files on the real Sputnik DAO; their accounts and round id are the sandbox's"
+  },
+  "manifests": {
+    "headcount-fund-round-usdc": {
+      "sha256": "cadf2316754b855e69f076dbd68ab680cedd1cd2fffffc66537b8e5a27201366",
+      "trezu_parse_manifest": "accepted"
+    },
+    "headcount-name-screener": {
+      "sha256": "531ca339310a5e858d03607cc447827beb595d79f279b34e48228339df15bb67",
+      "trezu_parse_manifest": "accepted"
+    },
+    "headcount-resolve-group": {
+      "sha256": "9ccb4103f4ab227d673225d45c8ed66d2d0956212b99d2af78cdce25aa577ef1",
+      "trezu_parse_manifest": "accepted"
+    }
+  },
+  "vectors": [
+    {
+      "template": "headcount-name-screener",
+      "what": "sandbox: dao.test.near names screener.test.near, with 2-day windows",
+      "values": {
+        "dao_id": "dao.test.near",
+        "screener_id": "screener.test.near",
+        "verdict_window_sec": 172800,
+        "hold_window_sec": 172800
+      },
+      "proposal": {
+        "kind": {
+          "FunctionCall": {
+            "receiver_id": "headcount.test.near",
+            "actions": [
+              {
+                "method_name": "configure",
+                "args": "eyJkYW9faWQiOiJkYW8udGVzdC5uZWFyIiwic2NyZWVuZXJfaWQiOiJzY3JlZW5lci50ZXN0Lm5lYXIiLCJ2ZXJkaWN0X3dpbmRvd19zZWMiOjE3MjgwMCwiaG9sZF93aW5kb3dfc2VjIjoxNzI4MDB9",
+                "deposit": "10000000000000000000000",
+                "gas": "30000000000000"
+              }
+            ]
+          }
+        },
+        "description": "* Proposal Action: custom <br>* Template: [trezu-tmpl:headcount-name-screener] <br>* Summary: Name screener.test.near as the screener of dao.test.near's Headcount rounds"
+      }
+    },
+    {
+      "template": "headcount-name-screener",
+      "what": "number fields given as text still reach the contract as JSON numbers",
+      "values": {
+        "dao_id": "dao.test.near",
+        "screener_id": "screener.test.near",
+        "verdict_window_sec": "60",
+        "hold_window_sec": "60"
+      },
+      "proposal": {
+        "kind": {
+          "FunctionCall": {
+            "receiver_id": "headcount.test.near",
+            "actions": [
+              {
+                "method_name": "configure",
+                "args": "eyJkYW9faWQiOiJkYW8udGVzdC5uZWFyIiwic2NyZWVuZXJfaWQiOiJzY3JlZW5lci50ZXN0Lm5lYXIiLCJ2ZXJkaWN0X3dpbmRvd19zZWMiOjYwLCJob2xkX3dpbmRvd19zZWMiOjYwfQ==",
+                "deposit": "10000000000000000000000",
+                "gas": "30000000000000"
+              }
+            ]
+          }
+        },
+        "description": "* Proposal Action: custom <br>* Template: [trezu-tmpl:headcount-name-screener] <br>* Summary: Name screener.test.near as the screener of dao.test.near's Headcount rounds"
+      }
+    },
+    {
+      "template": "headcount-fund-round-usdc",
+      "what": "sandbox: fund the round from fixtures/round-16.csv with its total",
+      "values": {
+        "round_id": "90a14b05d807a3cfd0823c90d3cc04646d2332ffa01bd0687125295f4282d1c5",
+        "amount": "114275001"
+      },
+      "proposal": {
+        "kind": {
+          "FunctionCall": {
+            "receiver_id": "token.test.near",
+            "actions": [
+              {
+                "method_name": "ft_transfer_call",
+                "args": "eyJyZWNlaXZlcl9pZCI6ImhlYWRjb3VudC50ZXN0Lm5lYXIiLCJhbW91bnQiOiIxMTQyNzUwMDEiLCJtc2ciOiI5MGExNGIwNWQ4MDdhM2NmZDA4MjNjOTBkM2NjMDQ2NDZkMjMzMmZmYTAxYmQwNjg3MTI1Mjk1ZjQyODJkMWM1In0=",
+                "deposit": "1",
+                "gas": "100000000000000"
+              }
+            ]
+          }
+        },
+        "description": "* Proposal Action: custom <br>* Template: [trezu-tmpl:headcount-fund-round-usdc] <br>* Summary: Fund Headcount round 90a14b05d807a3cfd0823c90d3cc04646d2332ffa01bd0687125295f4282d1c5 with 114275001 (smallest units)"
+      }
+    },
+    {
+      "template": "headcount-resolve-group",
+      "what": "sandbox: group 1 of that round, release r01.test.near only",
+      "values": {
+        "round_id": "90a14b05d807a3cfd0823c90d3cc04646d2332ffa01bd0687125295f4282d1c5",
+        "group": 1,
+        "decision": "{\"ReleaseOne\":{\"account_id\":\"r01.test.near\"}}"
+      },
+      "proposal": {
+        "kind": {
+          "FunctionCall": {
+            "receiver_id": "headcount.test.near",
+            "actions": [
+              {
+                "method_name": "resolve_group",
+                "args": "eyJyb3VuZF9pZCI6IjkwYTE0YjA1ZDgwN2EzY2ZkMDgyM2M5MGQzY2MwNDY0NmQyMzMyZmZhMDFiZDA2ODcxMjUyOTVmNDI4MmQxYzUiLCJncm91cCI6MSwiZGVjaXNpb24iOnsiUmVsZWFzZU9uZSI6eyJhY2NvdW50X2lkIjoicjAxLnRlc3QubmVhciJ9fX0=",
+                "deposit": "0",
+                "gas": "60000000000000"
+              }
+            ]
+          }
+        },
+        "description": "* Proposal Action: custom <br>* Template: [trezu-tmpl:headcount-resolve-group] <br>* Summary: Round 90a14b05d807a3cfd0823c90d3cc04646d2332ffa01bd0687125295f4282d1c5, group 1: {\"ReleaseOne\":{\"account_id\":\"r01.test.near\"}}"
+      }
+    },
+    {
+      "template": "headcount-resolve-group",
+      "what": "release the whole group, the group number given as text",
+      "values": {
+        "round_id": "90a14b05d807a3cfd0823c90d3cc04646d2332ffa01bd0687125295f4282d1c5",
+        "group": "2",
+        "decision": "\"ReleaseAll\""
+      },
+      "proposal": {
+        "kind": {
+          "FunctionCall": {
+            "receiver_id": "headcount.test.near",
+            "actions": [
+              {
+                "method_name": "resolve_group",
+                "args": "eyJyb3VuZF9pZCI6IjkwYTE0YjA1ZDgwN2EzY2ZkMDgyM2M5MGQzY2MwNDY0NmQyMzMyZmZhMDFiZDA2ODcxMjUyOTVmNDI4MmQxYzUiLCJncm91cCI6MiwiZGVjaXNpb24iOiJSZWxlYXNlQWxsIn0=",
+                "deposit": "0",
+                "gas": "60000000000000"
+              }
+            ]
+          }
+        },
+        "description": "* Proposal Action: custom <br>* Template: [trezu-tmpl:headcount-resolve-group] <br>* Summary: Round 90a14b05d807a3cfd0823c90d3cc04646d2332ffa01bd0687125295f4282d1c5, group 2: \"ReleaseAll\""
+      }
+    },
+    {
+      "template": "headcount-resolve-group",
+      "what": "send the whole group back",
+      "values": {
+        "round_id": "90a14b05d807a3cfd0823c90d3cc04646d2332ffa01bd0687125295f4282d1c5",
+        "group": 3,
+        "decision": "\"Refund\""
+      },
+      "proposal": {
+        "kind": {
+          "FunctionCall": {
+            "receiver_id": "headcount.test.near",
+            "actions": [
+              {
+                "method_name": "resolve_group",
+                "args": "eyJyb3VuZF9pZCI6IjkwYTE0YjA1ZDgwN2EzY2ZkMDgyM2M5MGQzY2MwNDY0NmQyMzMyZmZhMDFiZDA2ODcxMjUyOTVmNDI4MmQxYzUiLCJncm91cCI6MywiZGVjaXNpb24iOiJSZWZ1bmQifQ==",
+                "deposit": "0",
+                "gas": "60000000000000"
+              }
+            ]
+          }
+        },
+        "description": "* Proposal Action: custom <br>* Template: [trezu-tmpl:headcount-resolve-group] <br>* Summary: Round 90a14b05d807a3cfd0823c90d3cc04646d2332ffa01bd0687125295f4282d1c5, group 3: \"Refund\""
+      }
+    }
+  ]
+}

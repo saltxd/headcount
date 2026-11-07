@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "id": "headcount-name-screener",
+  "title": "Headcount: name the screener",
+  "description": "Names the account that screens this treasury's Headcount reward rounds, and how long a round waits for its verdict and for council votes on held recipients. Headcount accepts this only from the treasury itself, so it takes this vote.",
+  "summary": "Name {{screener_id}} as the screener of {{dao_id}}'s Headcount rounds",
+  "binding": {
+    "receiver_id": "headcount.test.near",
+    "method_name": "configure",
+    "deposit": "10000000000000000000000",
+    "gas": "30000000000000"
+  },
+  "fields": [
+    {
+      "name": "dao_id",
+      "label": "This treasury's account",
+      "type": "account",
+      "required": true,
+      "help": "The DAO filing this proposal, for example mydao.sputnik-dao.near. Headcount refuses any other."
+    },
+    {
+      "name": "screener_id",
+      "label": "Screener account",
+      "type": "account",
+      "required": true,
+      "help": "The only account that may post which recipients of this treasury's rounds are linked."
+    },
+    {
+      "name": "verdict_window_sec",
+      "label": "Verdict window, in seconds",
+      "type": "number",
+      "required": true,
+      "default": 172800,
+      "help": "How long a funded round waits for the screener's verdict before all of it can go back to the treasury. 172800 is two days.",
+      "validation": { "min": "60", "max": "31622400" }
+    },
+    {
+      "name": "hold_window_sec",
+      "label": "Hold window, in seconds",
+      "type": "number",
+      "required": true,
+      "default": 172800,
+      "help": "How long held recipients wait for a council vote before their amounts can go back to the treasury. 172800 is two days.",
+      "validation": { "min": "60", "max": "31622400" }
+    }
+  ],
+  "args": {
+    "dao_id": "{{dao_id}}",
+    "screener_id": "{{screener_id}}",
+    "verdict_window_sec": "{{verdict_window_sec}}",
+    "hold_window_sec": "{{hold_window_sec}}"
+  }
+}

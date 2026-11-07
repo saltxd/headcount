@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit",
     "screen": "node ts/screener/cli.ts screen",
     "board": "node ts/screener/cli.ts board",
-    "screen:live": "node ts/screener/live-check.ts"
+    "screen:live": "node ts/screener/live-check.ts",
+    "templates": "node ts/src/templates-cli.ts"
   },
   "devDependencies": {
     "@types/node": "22.15.3",

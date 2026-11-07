@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "id": "headcount-fund-round-usdc",
+  "title": "Headcount: fund a screened round (USDC)",
+  "description": "Moves one round's total from the treasury into Headcount with the token's ft_transfer_call, the call Trezu's bulk payments already file, with the round id as its message. Headcount keeps the tokens only if the token, the sender (this treasury) and the amount (the round's exact total) all match; otherwise the token sends them back.",
+  "summary": "Fund Headcount round {{round_id}} with {{amount}} (smallest units)",
+  "binding": {
+    "receiver_id": "token.test.near",
+    "method_name": "ft_transfer_call",
+    "deposit": "1",
+    "gas": "100000000000000"
+  },
+  "fields": [
+    {
+      "name": "round_id",
+      "label": "Round id",
+      "type": "text",
+      "required": true,
+      "help": "The 64-character id create_round returned: Trezu's list id for the same list.",
+      "validation": { "pattern": "^[0-9a-f]{64}$" }
+    },
+    {
+      "name": "amount",
+      "label": "Round total, in the token's smallest unit",
+      "type": "amount",
+      "required": true,
+      "help": "Exactly the round's total, as get_round shows it. USDC has 6 decimals, so 1 USDC is 1000000."
+    }
+  ],
+  "args": {
+    "receiver_id": "headcount.test.near",
+    "amount": "{{amount}}",
+    "msg": "{{round_id}}"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "id": "headcount-resolve-group",
+  "title": "Headcount: decide a held group",
+  "description": "The council's decision on one group of recipients the screener held: pay all of them, pay one and send the rest back, or send the whole group back to the treasury. Headcount accepts this only from the treasury itself, so it takes this vote.",
+  "summary": "Round {{round_id}}, group {{group}}: {{decision}}",
+  "binding": {
+    "receiver_id": "headcount.test.near",
+    "method_name": "resolve_group",
+    "deposit": "0",
+    "gas": "60000000000000"
+  },
+  "fields": [
+    {
+      "name": "round_id",
+      "label": "Round id",
+      "type": "text",
+      "required": true,
+      "help": "The 64-character id of the round.",
+      "validation": { "pattern": "^[0-9a-f]{64}$" }
+    },
+    {
+      "name": "group",
+      "label": "Group number",
+      "type": "number",
+      "required": true,
+      "help": "As get_round numbers the held groups, counting from 1.",
+      "validation": { "min": "1" }
+    },
+    {
+      "name": "decision",
+      "label": "Decision, as JSON",
+      "type": "json",
+      "required": true,
+      "help": "\"ReleaseAll\" pays every account in the group. \"Refund\" sends the group's amounts back to the treasury. {\"ReleaseOne\": {\"account_id\": \"alice.near\"}} pays that one account and sends the rest back."
+    }
+  ],
+  "args": {
+    "round_id": "{{round_id}}",
+    "group": "{{group}}",
+    "decision": "{{decision}}"
+  }
+}
